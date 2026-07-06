@@ -99,7 +99,7 @@ export default class CortexPlugin extends Plugin {
 				args,
 				{ cwd: options.cwd, env: options.env, maxBuffer: 20 * 1024 * 1024 },
 				(error, stdout, stderr) => {
-					const code = error ? (typeof (error as { code?: number }).code === "number" ? (error as { code: number }).code : 1) : 0;
+					const code = error ? (typeof error.code === "number" ? error.code : 1) : 0;
 					resolve({ code, stdout: stdout?.toString() ?? "", stderr: stderr?.toString() ?? "" });
 				}
 			);
