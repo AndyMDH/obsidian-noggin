@@ -1,6 +1,6 @@
 {
   "name": "obsidian-cortex",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Turn dictated or pasted notes into a linked, tagged knowledge graph, in-app, powered directly by the Anthropic API.",
   "main": "main.js",
   "type": "module",
