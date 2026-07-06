@@ -15,12 +15,14 @@ required day to day.
 You don't need to know how to code to use Cortex. You need:
 
 - **Obsidian** (free, [obsidian.md](https://obsidian.md))
-- Either of these:
+- One of these:
   - **A Claude subscription** (Claude Pro or Max) — also needs
     [Claude Code](https://docs.claude.com/claude-code) installed (a one-time
     terminal step, just following that page's instructions — no coding).
-  - **An Anthropic API key** instead, billed separately — get one at
-    [console.anthropic.com](https://console.anthropic.com/settings/keys).
+  - **An API key** instead, billed separately, from whichever you already
+    have: Anthropic, OpenAI, or Gemini.
+  - **A local model** (e.g. via [Ollama](https://ollama.com)) — no API key,
+    no billing, nothing ever leaves this machine.
 
 ## Installing Cortex
 
@@ -44,10 +46,11 @@ will also keep Cortex updated for you automatically.
 Open **Settings → Cortex** in Obsidian:
 
 - **Execution mode**: choose "Claude Code CLI" if you have a Claude
-  subscription and installed Claude Code above, or "Direct API key" if
-  you're using an API key instead.
-- If you chose the API key option, paste your key into the **Anthropic API
-  key** field.
+  subscription and installed Claude Code above, or "Direct API key" for
+  everything else.
+- If you chose Direct API key, pick a **Provider** (Anthropic, OpenAI,
+  Gemini, or Local) and fill in whatever it asks for — an API key, or a base
+  URL if you picked Local.
 - If you chose Claude Code and it's not being found automatically, see
   "Something not working?" below.
 
@@ -56,47 +59,32 @@ else to start using it.
 
 ## How to use it day to day
 
-1. Get a note into the `00-Inbox` folder, either:
-   - **Manually**: create a new note in Obsidian (`Cmd/Ctrl+N`) and dictate
-     or paste whatever you want captured — a meeting, a thought, anything.
-     New notes land in `00-Inbox` automatically.
-   - **Fully hands-free** (optional, see below): a dictation tool writes the
-     note for you, with no need to open Obsidian at all.
-2. Within a few seconds (or the next time you open Obsidian), Cortex picks
-   it up on its own — no button to press. You can also trigger it manually
-   any time via the brain-circuit icon in the left sidebar, or the command
-   palette → "Cortex: Process inbox now."
-3. Check the `10-Meetings` folder — your note will show up there, tagged
-   and summarized, with your original text preserved underneath.
-4. Once a topic has 4 or more notes behind it, Cortex automatically writes
-   a summary page for that topic in `20-Wikis` — a single page that pulls
-   together everything you've captured about it so far.
+Point your dictation tool's "run a script with the transcript" setting at
+[`examples/dictation-capture.sh`](examples/dictation-capture.sh) (edit the two
+variables at the top first — [Handy](https://handy.computer) calls this
+Settings → Paste method → "External script"). Then:
 
-Your tags come from the `30-Tags` folder — one file per tag. Add a file
-there for any tag you want Cortex to be able to use (for example, a client
-or project name), and Cortex will start using it going forward instead of
-falling back to something more generic.
+1. Press your dictation hotkey, talk, press it again. The transcript lands
+   in `00-Inbox` on its own — no need to open Obsidian at all.
+2. Cortex picks it up within a few seconds once Obsidian's open — no button
+   to press. Trigger it manually any time via the brain-circuit icon in the
+   left sidebar, or the command palette → "Cortex: Process inbox now."
+3. Check `10-Meetings` — tagged, summarized, your original text preserved
+   underneath.
+4. Once a topic has 4 or more notes behind it, Cortex writes a summary page
+   for it in `20-Wikis`, pulling together everything captured about it so far.
 
-### Fully hands-free capture (optional)
+No dictation tool with that option? Create a note by hand (`Cmd/Ctrl+N`) and
+paste or type into it instead — same result, one extra step.
 
-If your dictation tool supports running a custom script with the transcript
-(check its settings for something like "paste method" or "output" → "run a
-script" / "external script") — [Handy](https://handy.computer) does, under
-Settings → Paste method → "External script" — you can skip Obsidian
-entirely: press your dictation hotkey, talk, press it again, and the
-transcript lands straight in `00-Inbox` on its own. Cortex picks it up the
-same way either way.
+One thing to know: the external-script setting is usually all-or-nothing for
+the dictation tool, not per-hotkey — turning it on means that tool stops
+typing transcribed text into other apps, since transcription now goes to the
+script instead. Skip it if you use that hotkey for other apps too.
 
-[`examples/dictation-capture.sh`](examples/dictation-capture.sh) is a small
-script for this: edit the `VAULT` and `INBOX_FOLDER` variables at the top to
-match your vault and Cortex's "Inbox folder" setting, point your dictation
-tool's external-script option at it, and you're done.
-
-One thing to know: this is usually an all-or-nothing setting for the
-dictation tool, not per-hotkey — turning it on means that tool stops typing
-transcribed text into other apps, since every transcription now goes to the
-script instead. Fine if you want a dictation hotkey dedicated to capture;
-skip this section if you use that hotkey for other apps too.
+Tags come from the `30-Tags` folder — one file per tag. Add a file there for
+any tag you want Cortex to use (a client or project name, say), and Cortex
+will prefer it over inventing something more generic.
 
 ## Something not working?
 
@@ -113,12 +101,15 @@ skip this section if you use that hotkey for other apps too.
 
 ## Privacy & permissions
 
-- **Remote service used**: the [Anthropic API](https://www.anthropic.com/).
-  In CLI mode this call is made by the Claude Code program, not the plugin
-  directly; in API mode the plugin calls it directly. Either way, the only
-  data sent is the content of your captured notes, plus your tag names and
-  a short list of recent note titles (used for tagging and duplicate
-  detection) — nothing else in your vault is transmitted.
+- **Remote service used**: in CLI mode, the Anthropic API, called by the
+  Claude Code program, not the plugin directly. In Direct API key mode,
+  whichever provider you picked (Anthropic, OpenAI, or Gemini) — called by
+  the plugin directly. **Local mode makes no remote call at all**: the
+  request goes to a model running on this machine (or wherever your base URL
+  points), nothing leaves it. Whenever a remote call is made, the only data
+  sent is the content of your captured notes, plus your tag names and a short
+  list of recent note titles (used for tagging and duplicate detection) —
+  nothing else in your vault is transmitted.
 - **File access outside the vault**: none. Cortex only reads and writes
   files inside the current vault.
 - **Local program execution**: in CLI mode, Cortex runs the `claude`
@@ -143,6 +134,10 @@ skip this section if you use that hotkey for other apps too.
   files and double-check itself while working; API mode asks for one
   response per note in a single pass. Both work well for normal notes — CLI
   mode has more room to get a tricky or ambiguous one right.
+- **Non-Anthropic providers vary in reliability.** Every provider is asked to
+  return one structured tool call per note; smaller or local models are more
+  likely to produce something Cortex can't parse, in which case the note is
+  left in `00-Inbox` and logged as an error rather than guessed at.
 
 ## For developers
 

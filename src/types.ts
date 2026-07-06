@@ -1,9 +1,16 @@
 export type ExecutionMode = "api" | "cli";
 
+// Only relevant when executionMode is "api" - CLI mode always shells out to
+// the `claude` binary regardless of this setting, since it's inherently tied
+// to Claude Code rather than something to generalize across providers.
+export type ApiProvider = "anthropic" | "openai" | "gemini" | "local";
+
 export interface CortexSettings {
 	executionMode: ExecutionMode;
-	apiKey: string;
-	model: string;
+	apiProvider: ApiProvider;
+	apiKeys: Record<ApiProvider, string>;
+	models: Record<ApiProvider, string>;
+	localBaseUrl: string; // only used when apiProvider is "local"
 	claudeCliPath: string;
 	inboxFolder: string;
 	meetingsFolder: string;
@@ -16,8 +23,15 @@ export interface CortexSettings {
 
 export const DEFAULT_SETTINGS: CortexSettings = {
 	executionMode: "cli",
-	apiKey: "",
-	model: "claude-sonnet-5",
+	apiProvider: "anthropic",
+	apiKeys: { anthropic: "", openai: "", gemini: "", local: "" },
+	models: {
+		anthropic: "claude-sonnet-5",
+		openai: "gpt-5.1",
+		gemini: "gemini-3-pro-preview",
+		local: "llama3.1",
+	},
+	localBaseUrl: "http://localhost:11434/v1",
 	claudeCliPath: "claude",
 	inboxFolder: "00-Inbox",
 	meetingsFolder: "10-Meetings",

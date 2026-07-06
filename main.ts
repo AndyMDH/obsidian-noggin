@@ -10,10 +10,13 @@ import {
 	requestUrl,
 } from "obsidian";
 import { execFile } from "child_process";
-import type { CortexSettings, EnrichResult, NoteIndexEntry, WikiSynthesisResult } from "./src/types";
+import type { ApiProvider, CortexSettings, EnrichResult, NoteIndexEntry, WikiSynthesisResult } from "./src/types";
 import { DEFAULT_SETTINGS } from "./src/types";
-import { AnthropicApiError, callClaudeTool } from "./src/anthropic";
+import { AnthropicProvider } from "./src/anthropic";
 import type { HttpPost } from "./src/anthropic";
+import { LlmApiError, type LlmProvider } from "./src/llmProvider";
+import { OpenAiCompatibleProvider } from "./src/openaiCompatible";
+import { GeminiProvider } from "./src/gemini";
 import {
 	ENRICH_TOOL,
 	WIKI_TOOL,
@@ -91,6 +94,23 @@ export default class CortexPlugin extends Plugin {
 		const res = await requestUrl({ url, method: "POST", headers, body, throw: false });
 		return { status: res.status, text: res.text };
 	};
+
+	private getLlmProvider(): LlmProvider {
+		const provider: ApiProvider = this.settings.apiProvider;
+		const apiKey = this.settings.apiKeys[provider];
+		const model = this.settings.models[provider];
+		switch (provider) {
+			case "openai":
+				return new OpenAiCompatibleProvider(this.httpPost, apiKey, model, "https://api.openai.com/v1");
+			case "gemini":
+				return new GeminiProvider(this.httpPost, apiKey, model);
+			case "local":
+				return new OpenAiCompatibleProvider(this.httpPost, apiKey, model, this.settings.localBaseUrl);
+			case "anthropic":
+			default:
+				return new AnthropicProvider(this.httpPost, apiKey, model);
+		}
+	}
 
 	private cliExec: CliExec = (command, args, options) => {
 		return new Promise((resolve) => {
@@ -385,8 +405,8 @@ export default class CortexPlugin extends Plugin {
 
 	async processFile(file: TFile): Promise<boolean> {
 		if (this.inFlight.has(file.path)) return false;
-		if (!this.settings.apiKey) {
-			new Notice("Cortex: no Anthropic API key set in plugin settings.", 10000);
+		if (this.settings.apiProvider !== "local" && !this.settings.apiKeys[this.settings.apiProvider]) {
+			new Notice(`Cortex: no ${this.settings.apiProvider} API key set in plugin settings.`, 10000);
 			return false;
 		}
 		this.inFlight.add(file.path);
@@ -399,10 +419,7 @@ export default class CortexPlugin extends Plugin {
 			const dateHint = logic.extractFilenameDateHint(file.name);
 			const ctime = new Date(file.stat.ctime).toISOString().slice(0, 10);
 
-			const result = await callClaudeTool<EnrichResult>(
-				this.httpPost,
-				this.settings.apiKey,
-				this.settings.model,
+			const result = await this.getLlmProvider().callTool<EnrichResult>(
 				enrichSystemPrompt(tagRegistry),
 				enrichUserMessage(raw, dateHint, ctime, existingIndex),
 				ENRICH_TOOL
@@ -436,9 +453,9 @@ export default class CortexPlugin extends Plugin {
 			);
 			return true;
 		} catch (e) {
-			if (e instanceof AnthropicApiError) {
+			if (e instanceof LlmApiError) {
 				new Notice(`Cortex API error (${e.status}) on "${file.name}" - see .cortex/pipeline.log`, 10000);
-				await this.appendLog(`ERROR: ${file.name} - Anthropic API ${e.status}: ${e.body.slice(0, 300)}`);
+				await this.appendLog(`ERROR: ${file.name} - ${this.settings.apiProvider} API ${e.status}: ${e.body.slice(0, 300)}`);
 				return false;
 			}
 			throw e;
@@ -536,10 +553,7 @@ export default class CortexPlugin extends Plugin {
 
 	private async createWiki(topic: string, notes: logic.NoteMeta[], noteFiles: TFile[]) {
 		const { sources, timeline } = await this.readSourcesForWiki(notes, noteFiles);
-		const result = await callClaudeTool<WikiSynthesisResult>(
-			this.httpPost,
-			this.settings.apiKey,
-			this.settings.model,
+		const result = await this.getLlmProvider().callTool<WikiSynthesisResult>(
 			wikiSystemPrompt(topic, false),
 			wikiUserMessage(sources, null),
 			WIKI_TOOL
@@ -574,10 +588,7 @@ export default class CortexPlugin extends Plugin {
 		const { timeline: allTimeline } = await this.readSourcesForWiki(allNotes, noteFiles);
 		const existingCurrentState = this.extractCurrentState(existingContent);
 
-		const result = await callClaudeTool<WikiSynthesisResult>(
-			this.httpPost,
-			this.settings.apiKey,
-			this.settings.model,
+		const result = await this.getLlmProvider().callTool<WikiSynthesisResult>(
 			wikiSystemPrompt(topic, true),
 			wikiUserMessage(newSources, existingCurrentState),
 			WIKI_TOOL
@@ -644,7 +655,7 @@ class CortexSettingTab extends PluginSettingTab {
 			.setDesc(
 				this.plugin.settings.executionMode === "cli"
 					? "Shells out to the Claude Code CLI, using whatever auth it already has (subscription or API key) - no separate billing, but desktop only and requires Claude Code installed."
-					: "Calls the Anthropic API directly with the key below - works on mobile too, but is billed separately from a Claude subscription/Claude Code login."
+					: "Calls a model API directly (Anthropic, OpenAI, Gemini, or a local model) - works on mobile too (except Local, which needs a reachable server), but is billed separately from a Claude subscription/Claude Code login."
 			)
 			.addDropdown((dropdown) => {
 				dropdown
@@ -681,29 +692,66 @@ class CortexSettingTab extends PluginSettingTab {
 						})
 				);
 		} else {
+			const provider = this.plugin.settings.apiProvider;
+			const providerLabel = { anthropic: "Anthropic", openai: "OpenAI", gemini: "Gemini", local: "Local" }[
+				provider
+			];
+
 			new Setting(containerEl)
-				.setName("Anthropic API key")
+				.setName("Provider")
 				.setDesc(
-					"Stored locally in this vault's .obsidian/plugins/cortex/data.json - keep this vault out of any repo or sync you don't fully control."
+					'Which model API to call directly. "Local" needs no API key and sends nothing off this machine (e.g. Ollama).'
 				)
-				.addText((text) =>
-					text
-						.setPlaceholder("sk-ant-...")
-						.setValue(this.plugin.settings.apiKey)
+				.addDropdown((dropdown) => {
+					dropdown
+						.addOption("anthropic", "Anthropic")
+						.addOption("openai", "OpenAI")
+						.addOption("gemini", "Gemini")
+						.addOption("local", "Local (OpenAI-compatible, e.g. Ollama)")
+						.setValue(provider)
 						.onChange(async (value) => {
-							this.plugin.settings.apiKey = value.trim();
+							this.plugin.settings.apiProvider = value as ApiProvider;
 							await this.plugin.saveSettings();
-						})
-				);
+							this.display();
+						});
+				});
+
+			if (provider !== "local") {
+				new Setting(containerEl)
+					.setName(`${providerLabel} API key`)
+					.setDesc(
+						"Stored locally in this vault's .obsidian/plugins/cortex/data.json - keep this vault out of any repo or sync you don't fully control."
+					)
+					.addText((text) =>
+						text
+							.setValue(this.plugin.settings.apiKeys[provider])
+							.onChange(async (value) => {
+								this.plugin.settings.apiKeys[provider] = value.trim();
+								await this.plugin.saveSettings();
+							})
+					);
+			} else {
+				new Setting(containerEl)
+					.setName("Base URL")
+					.setDesc('OpenAI-compatible endpoint, e.g. Ollama\'s default "http://localhost:11434/v1".')
+					.addText((text) =>
+						text
+							.setValue(this.plugin.settings.localBaseUrl)
+							.onChange(async (value) => {
+								this.plugin.settings.localBaseUrl = value.trim() || DEFAULT_SETTINGS.localBaseUrl;
+								await this.plugin.saveSettings();
+							})
+					);
+			}
 
 			new Setting(containerEl)
 				.setName("Model")
-				.setDesc("Anthropic model id used for both enrichment and wiki synthesis.")
+				.setDesc(`${providerLabel} model id used for both enrichment and wiki synthesis.`)
 				.addText((text) =>
 					text
-						.setValue(this.plugin.settings.model)
+						.setValue(this.plugin.settings.models[provider])
 						.onChange(async (value) => {
-							this.plugin.settings.model = value.trim();
+							this.plugin.settings.models[provider] = value.trim();
 							await this.plugin.saveSettings();
 						})
 				);

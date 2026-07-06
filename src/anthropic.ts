@@ -6,6 +6,8 @@
 // is what actually makes calling api.anthropic.com directly from an Obsidian
 // plugin possible at all.
 
+import { LlmApiError, type LlmProvider, type LlmTool } from "./llmProvider.ts";
+
 export interface HttpResponse {
 	status: number;
 	text: string;
@@ -17,21 +19,18 @@ export type HttpPost = (
 	body: string
 ) => Promise<HttpResponse>;
 
-export interface AnthropicTool {
-	name: string;
-	description: string;
-	input_schema: Record<string, unknown>;
-}
+// Same shape as LlmTool - kept as its own export so existing call sites and
+// tests that import AnthropicTool don't need to change.
+export type AnthropicTool = LlmTool;
 
-export class AnthropicApiError extends Error {
-	status: number;
-	body: string;
-
+// A subclass rather than a bare alias so existing `instanceof AnthropicApiError`
+// checks (including in tests) keep working, while call sites that only know
+// about the generic LlmProvider interface can catch `instanceof LlmApiError`
+// regardless of which provider actually threw.
+export class AnthropicApiError extends LlmApiError {
 	constructor(message: string, status: number, body: string) {
-		super(message);
+		super(message, status, body);
 		this.name = "AnthropicApiError";
-		this.status = status;
-		this.body = body;
 	}
 }
 
@@ -97,4 +96,20 @@ export async function callClaudeTool<T>(
 	}
 
 	return toolUse.input as T;
+}
+
+export class AnthropicProvider implements LlmProvider {
+	private httpPost: HttpPost;
+	private apiKey: string;
+	private model: string;
+
+	constructor(httpPost: HttpPost, apiKey: string, model: string) {
+		this.httpPost = httpPost;
+		this.apiKey = apiKey;
+		this.model = model;
+	}
+
+	callTool<T>(system: string, userMessage: string, tool: LlmTool, maxTokens = 4096): Promise<T> {
+		return callClaudeTool<T>(this.httpPost, this.apiKey, this.model, system, userMessage, tool, maxTokens);
+	}
 }
