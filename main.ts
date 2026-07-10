@@ -169,6 +169,8 @@ export default class CortexPlugin extends Plugin {
 				return new OpenAiCompatibleProvider(this.httpPost, apiKey, model, "https://api.openai.com/v1");
 			case "gemini":
 				return new GeminiProvider(this.httpPost, apiKey, model);
+			case "glm":
+				return new OpenAiCompatibleProvider(this.httpPost, apiKey, model, this.settings.glmBaseUrl);
 			case "local":
 				return new OpenAiCompatibleProvider(this.httpPost, apiKey, model, this.settings.localBaseUrl);
 			case "anthropic":
@@ -1060,9 +1062,13 @@ class CortexSettingTab extends PluginSettingTab {
 				);
 		} else {
 			const provider = this.plugin.settings.apiProvider;
-			const providerLabel = { anthropic: "Anthropic", openai: "OpenAI", gemini: "Gemini", local: "Local" }[
-				provider
-			];
+			const providerLabel = {
+				anthropic: "Anthropic",
+				openai: "OpenAI",
+				gemini: "Gemini",
+				glm: "GLM",
+				local: "Local",
+			}[provider];
 
 			new Setting(containerEl)
 				.setName("Provider")
@@ -1074,6 +1080,7 @@ class CortexSettingTab extends PluginSettingTab {
 						.addOption("anthropic", "Anthropic")
 						.addOption("openai", "OpenAI")
 						.addOption("gemini", "Gemini")
+						.addOption("glm", "GLM (Z.ai)")
 						.addOption("local", "Local (OpenAI-compatible, e.g. Ollama)")
 						.setValue(provider)
 						.onChange(async (value) => {
@@ -1083,7 +1090,44 @@ class CortexSettingTab extends PluginSettingTab {
 						});
 				});
 
-			if (provider !== "local") {
+			if (provider === "local") {
+				new Setting(containerEl)
+					.setName("Base URL")
+					.setDesc('OpenAI-compatible endpoint, e.g. Ollama\'s default "http://localhost:11434/v1".')
+					.addText((text) =>
+						text
+							.setValue(this.plugin.settings.localBaseUrl)
+							.onChange(async (value) => {
+								this.plugin.settings.localBaseUrl = value.trim() || DEFAULT_SETTINGS.localBaseUrl;
+								await this.plugin.saveSettings();
+							})
+					);
+			} else if (provider === "glm") {
+				new Setting(containerEl)
+					.setName("GLM API key")
+					.setDesc("Your Z.ai API key - stored locally in this vault.")
+					.addText((text) => {
+						text.inputEl.type = "password";
+						text.inputEl.autocomplete = "off";
+						text
+							.setValue(this.plugin.settings.apiKeys.glm)
+							.onChange(async (value) => {
+								this.plugin.settings.apiKeys.glm = value.trim();
+								await this.plugin.saveSettings();
+							});
+					});
+				new Setting(containerEl)
+					.setName("Base URL")
+					.setDesc('Z.ai OpenAI-compatible endpoint. The coding endpoint is "https://api.z.ai/api/coding/paas/v4" if you have a Coding Plan.')
+					.addText((text) =>
+						text
+							.setValue(this.plugin.settings.glmBaseUrl)
+							.onChange(async (value) => {
+								this.plugin.settings.glmBaseUrl = value.trim() || DEFAULT_SETTINGS.glmBaseUrl;
+								await this.plugin.saveSettings();
+							})
+					);
+			} else {
 				new Setting(containerEl)
 					.setName(`${providerLabel} API key`)
 					.setDesc(
@@ -1099,18 +1143,6 @@ class CortexSettingTab extends PluginSettingTab {
 								await this.plugin.saveSettings();
 							});
 					});
-			} else {
-				new Setting(containerEl)
-					.setName("Base URL")
-					.setDesc('OpenAI-compatible endpoint, e.g. Ollama\'s default "http://localhost:11434/v1".')
-					.addText((text) =>
-						text
-							.setValue(this.plugin.settings.localBaseUrl)
-							.onChange(async (value) => {
-								this.plugin.settings.localBaseUrl = value.trim() || DEFAULT_SETTINGS.localBaseUrl;
-								await this.plugin.saveSettings();
-							})
-					);
 			}
 
 			if (provider === "local") {
@@ -1308,6 +1340,7 @@ class OnboardingModal extends Modal {
 				.addOption("anthropic", "Anthropic")
 				.addOption("openai", "OpenAI")
 				.addOption("gemini", "Gemini")
+				.addOption("glm", "GLM (Z.ai)")
 				.addOption("local", "Local (e.g. Ollama)")
 				.setValue(provider())
 				.onChange(async (value) => {
@@ -1324,6 +1357,27 @@ class OnboardingModal extends Modal {
 				.addText((text) =>
 					text.setValue(this.plugin.settings.localBaseUrl).onChange(async (value) => {
 						this.plugin.settings.localBaseUrl = value.trim() || DEFAULT_SETTINGS.localBaseUrl;
+						await this.plugin.saveSettings();
+					})
+				);
+		} else if (provider() === "glm") {
+			new Setting(this.contentEl)
+				.setName("GLM API key")
+				.setDesc("Your Z.ai API key - stored locally in this vault.")
+				.addText((text) => {
+					text.inputEl.type = "password";
+					text.inputEl.autocomplete = "off";
+					text.setPlaceholder("Paste your key").onChange(async (value) => {
+						this.plugin.settings.apiKeys.glm = value.trim();
+						await this.plugin.saveSettings();
+					});
+				});
+			new Setting(this.contentEl)
+				.setName("Base URL")
+				.setDesc('Z.ai OpenAI-compatible endpoint. Use "https://api.z.ai/api/coding/paas/v4" for the Coding Plan.')
+				.addText((text) =>
+					text.setValue(this.plugin.settings.glmBaseUrl).onChange(async (value) => {
+						this.plugin.settings.glmBaseUrl = value.trim() || DEFAULT_SETTINGS.glmBaseUrl;
 						await this.plugin.saveSettings();
 					})
 				);

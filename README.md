@@ -24,9 +24,13 @@ No coding needed. Everything happens inside Obsidian.
 - One of these:
   - A **Claude subscription** (Pro or Max), plus
     [Claude Code](https://docs.claude.com/claude-code) installed once
-  - An **API key** from Anthropic, OpenAI, or Gemini
+  - An **API key** from Anthropic, OpenAI, Gemini, or [Z.ai](https://z.ai)
+    (GLM-5.2 and other GLM models)
   - A **local model** (e.g. [Ollama](https://ollama.com)) — free, nothing
     ever leaves your machine
+
+> **Desktop vs mobile:** Claude Code CLI mode only works on desktop. Use a
+> direct API key on mobile.
 
 ## Install
 
@@ -101,8 +105,8 @@ dropped in `00-Inbox` works too — including recordings made in the Obsidian
 
 One requirement: transcription (speech → text) runs through **Gemini or
 OpenAI**, so an API key for one of them must be set in Cortex's settings —
-even in Claude Code mode, where it's used *only* for transcription. (Claude
-has no audio API yet.)
+even in Claude Code or GLM mode, where it's used *only* for transcription.
+(Claude and GLM have no audio API yet.)
 
 <details>
 <summary><strong>Power option: a system-wide dictation hotkey</strong></summary>
@@ -169,6 +173,11 @@ npm test         # no live API/CLI calls
 
 Core logic lives in `src/` with no Obsidian dependency (tested with Node's
 test runner); `main.ts` wires it to the real app.
+
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how captures flow through
+  the vault layers.
+- [`docs/TECHNICAL.md`](docs/TECHNICAL.md) — code map, build process, and
+  extension points.
 
 ## License
 

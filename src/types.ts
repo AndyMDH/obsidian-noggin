@@ -1,13 +1,14 @@
 export type ExecutionMode = "api" | "cli";
 
 // Only used in API mode - CLI mode always shells out to `claude`.
-export type ApiProvider = "anthropic" | "openai" | "gemini" | "local";
+export type ApiProvider = "anthropic" | "openai" | "gemini" | "glm" | "local";
 
 export interface CortexSettings {
 	executionMode: ExecutionMode;
 	apiProvider: ApiProvider;
 	apiKeys: Record<ApiProvider, string>;
 	models: Record<ApiProvider, string>;
+	glmBaseUrl: string; // only used when apiProvider is "glm"
 	localBaseUrl: string; // only used when apiProvider is "local"
 	claudeCliPath: string;
 	inboxFolder: string;
@@ -41,18 +42,25 @@ export const MODEL_OPTIONS: Record<Exclude<ApiProvider, "local">, { id: string; 
 		{ id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
 		{ id: "gemini-2.5-flash", label: "Gemini 2.5 Flash — fastest, cheapest" },
 	],
+	glm: [
+		{ id: "glm-5.2", label: "GLM-5.2 — best balance (default)" },
+		{ id: "glm-5.2[1m]", label: "GLM-5.2 1M context" },
+		{ id: "glm-5", label: "GLM-5" },
+	],
 };
 
 export const DEFAULT_SETTINGS: CortexSettings = {
 	executionMode: "cli",
 	apiProvider: "anthropic",
-	apiKeys: { anthropic: "", openai: "", gemini: "", local: "" },
+	apiKeys: { anthropic: "", openai: "", gemini: "", glm: "", local: "" },
 	models: {
 		anthropic: "claude-sonnet-5",
 		openai: "gpt-5.1",
 		gemini: "gemini-3-pro-preview",
+		glm: "glm-5.2",
 		local: "llama3.1",
 	},
+	glmBaseUrl: "https://api.z.ai/api/paas/v4/",
 	localBaseUrl: "http://localhost:11434/v1",
 	claudeCliPath: "claude",
 	inboxFolder: "00-Inbox",
