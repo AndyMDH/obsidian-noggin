@@ -76,7 +76,7 @@ image/PDF/voice memo, hit Capture, done. Or drop anything straight into the
 </picture>
 
 - **Type or paste** — quick capture, or a note (`Cmd/Ctrl+N`) in `00-Inbox`
-- **Voice** — hit 🎙️ Record right inside quick capture (details below)
+- **Voice** — press a hotkey, talk, press again (setup below)
 - **Photos & screenshots** — `.png`, `.jpg`, `.webp`, `.heic` (to auto-capture
   Mac screenshots, see [`examples/`](examples/))
 - **PDFs**
@@ -88,16 +88,16 @@ force one anytime: command palette → "Cortex: Build/update wikis now").
 
 ### Capture by voice
 
-1. Click **➕ quick capture**.
-2. Hit **🎙️ Record**, talk, hit **Stop**.
-3. Hit **Capture**. Done — Cortex transcribes it and enriches the transcript
-   like any typed note, with the recording embedded in the result, still
-   playable.
+One-time setup: **Settings → Hotkeys**, search **"Cortex: Toggle voice
+capture"**, give it a key (say `Alt+Space`). From then on:
 
-Any audio file dropped in `00-Inbox` works the same way (`.m4a`, `.webm`,
-`.mp3`, `.wav`…) — including recordings from Obsidian's built-in Audio
-recorder core plugin on your **phone**: record a thought on the go, and it's
-a tagged, linked note by the time you're back at your desk.
+**Press the key, talk, press it again.** That's the whole thing — the
+recording drops into the inbox and comes back as a tagged, summarized note
+with the audio still playable inside. No buttons, no windows.
+
+(The same 🎙️ Record button lives in quick capture if you prefer clicking,
+and any audio file dropped in `00-Inbox` works too — including recordings
+made in the Obsidian **mobile** app on the go.)
 
 One requirement: transcription (speech → text) runs through **Gemini or
 OpenAI**, so an API key for one of them must be set in Cortex's settings —

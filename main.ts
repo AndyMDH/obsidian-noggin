@@ -50,6 +50,8 @@ export default class CortexPlugin extends Plugin {
 	settings: CortexSettings;
 	private inFlight = new Set<string>();
 	private cliRunInProgress = false;
+	private voiceRecorder: MediaRecorder | null = null;
+	private voiceStream: MediaStream | null = null;
 
 	async onload() {
 		await this.loadSettings();
@@ -91,6 +93,12 @@ export default class CortexPlugin extends Plugin {
 			id: "setup-wizard",
 			name: "Open setup wizard",
 			callback: () => new OnboardingModal(this.app, this).open(),
+		});
+
+		this.addCommand({
+			id: "toggle-voice-capture",
+			name: "Toggle voice capture (start/stop recording)",
+			callback: () => void this.toggleVoiceCapture(),
 		});
 
 		if (this.settings.autoProcessOnCreate) {
@@ -362,6 +370,48 @@ export default class CortexPlugin extends Plugin {
 			"Quick thought after today's kickoff with the new client: they want the reporting dashboard live before the end of next quarter, but their data quality is a mess - half the customer records are missing regions. Maria offered to run a cleanup sprint first. I should sketch the dashboard wireframe this week and check whether we can reuse the ETL setup from the last project.\n"
 		);
 		new Notice("Cortex: sample note dropped in the inbox - watch it get enriched.");
+	}
+
+	// Hands-free voice capture: one command toggles recording, no UI. The
+	// finished recording lands in the inbox and flows through the normal
+	// audio pipeline (transcribe -> enrich).
+	async toggleVoiceCapture() {
+		if (this.voiceRecorder?.state === "recording") {
+			this.voiceRecorder.stop();
+			return;
+		}
+		try {
+			this.voiceStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+		} catch {
+			new Notice("Cortex: microphone access denied - allow it for Obsidian in system settings.", 8000);
+			return;
+		}
+		const recorder = new MediaRecorder(this.voiceStream);
+		const chunks: Blob[] = [];
+		recorder.ondataavailable = (e) => {
+			if (e.data.size > 0) chunks.push(e.data);
+		};
+		recorder.onstop = () => {
+			this.voiceStream?.getTracks().forEach((t) => t.stop());
+			this.voiceStream = null;
+			this.voiceRecorder = null;
+			void (async () => {
+				const mime = recorder.mimeType || "audio/webm";
+				const ext = mime.includes("mp4") ? "m4a" : mime.includes("ogg") ? "ogg" : "webm";
+				const buffer = await new Blob(chunks, { type: mime }).arrayBuffer();
+				await this.ensureFolderExists(this.settings.inboxFolder);
+				const stamp = window.moment().format("YYYY-MM-DD HH.mm.ss");
+				await this.app.vault.createBinary(
+					`${this.settings.inboxFolder}/${stamp} Voice note.${ext}`,
+					buffer
+				);
+				new Notice("Cortex: voice note captured.");
+				if (!this.settings.autoProcessOnCreate) void this.processInbox();
+			})();
+		};
+		recorder.start();
+		this.voiceRecorder = recorder;
+		new Notice("Cortex: recording - press the hotkey again to stop.");
 	}
 
 	async quickCapture(text: string, attached: File | null) {
