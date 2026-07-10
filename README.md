@@ -95,9 +95,9 @@ capture"**, give it a key (say `Alt+Space`). From then on:
 recording drops into the inbox and comes back as a tagged, summarized note
 with the audio still playable inside. No buttons, no windows.
 
-(The same 🎙️ Record button lives in quick capture if you prefer clicking,
-and any audio file dropped in `00-Inbox` works too — including recordings
-made in the Obsidian **mobile** app on the go.)
+(No hotkey assigned? Run the same command from the palette. Any audio file
+dropped in `00-Inbox` works too — including recordings made in the Obsidian
+**mobile** app on the go.)
 
 One requirement: transcription (speech → text) runs through **Gemini or
 OpenAI**, so an API key for one of them must be set in Cortex's settings —
