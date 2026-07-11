@@ -155,9 +155,14 @@ export default class NogginPlugin extends Plugin {
 		return { status: res.status, text: res.text };
 	};
 
-	// Audio -> text via whichever of Gemini/OpenAI has a key (Anthropic has
-	// no audio API), independent of execution mode.
+	// Audio -> text, preferring fully local/offline whisper.cpp (macOS only)
+	// so voice capture needs no API key at all; falls back to whichever of
+	// Gemini/OpenAI has a key (Anthropic has no audio API), independent of
+	// execution mode.
 	async transcribeAudio(extension: string, binary: ArrayBuffer, filename: string): Promise<string> {
+		const local = await this.transcribeLocally(extension, binary);
+		if (local) return local;
+
 		const keys = this.settings.apiKeys;
 		const mediaType = audioMimeType(extension);
 		const preferOpenAi = this.settings.apiProvider === "openai" && !!keys.openai;
@@ -168,8 +173,71 @@ export default class NogginPlugin extends Plugin {
 			return transcribeWithOpenAi(this.httpPostBinary, keys.openai, mediaType, new Uint8Array(binary), filename);
 		}
 		throw new Error(
-			"Audio capture needs a Gemini or OpenAI API key for transcription (Settings → Noggin). The key is only used to turn speech into text - enrichment still runs in your chosen mode."
+			"Audio capture needs local whisper-cli (Settings → Noggin → Local voice transcription) or a Gemini/OpenAI API key. A key is only used to turn speech into text - enrichment still runs in your chosen mode."
 		);
+	}
+
+	defaultWhisperModelPath(): string {
+		return path.join(os.homedir(), ".local", "share", "whisper-models", "ggml-large-v3-turbo.bin");
+	}
+
+	private defaultWhisperVadModelPath(): string {
+		return path.join(os.homedir(), ".local", "share", "whisper-models", "ggml-silero-v5.1.2.bin");
+	}
+
+	private static async fileExists(p: string): Promise<boolean> {
+		return fsPromises
+			.access(p)
+			.then(() => true)
+			.catch(() => false);
+	}
+
+	// Returns null (rather than throwing) whenever local transcription isn't
+	// set up, so transcribeAudio can fall through to the cloud-key path.
+	private async transcribeLocally(extension: string, binary: ArrayBuffer): Promise<string | null> {
+		if (!Platform.isMacOS) return null; // afconvert is macOS-only
+
+		const modelPath = this.settings.whisperModelPath.trim() || this.defaultWhisperModelPath();
+		if (!(await NogginPlugin.fileExists(modelPath))) return null;
+
+		const stamp = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+		const rawPath = path.join(os.tmpdir(), `noggin-voice-${stamp}.${extension}`);
+		const wavPath = path.join(os.tmpdir(), `noggin-voice-${stamp}.wav`);
+		const outBase = path.join(os.tmpdir(), `noggin-voice-${stamp}`);
+		const cleanupPaths = [rawPath, wavPath, `${outBase}.json`];
+		try {
+			await fsPromises.writeFile(rawPath, Buffer.from(binary));
+			const env = this.cliEnv();
+			const convert = await this.cliExec(
+				"afconvert",
+				["-f", "WAVE", "-d", "LEI16@16000", "-c", "1", rawPath, wavPath],
+				{ cwd: os.tmpdir(), env }
+			);
+			if (convert.code !== 0) return null;
+
+			const whisperCli = this.settings.whisperCliPath.trim() || "whisper-cli";
+			const vadModelPath = this.defaultWhisperVadModelPath();
+			const args = ["-m", modelPath, "-f", wavPath, "-l", "auto", "-oj", "-of", outBase];
+			if (await NogginPlugin.fileExists(vadModelPath)) {
+				args.push("--vad", "--vad-model", vadModelPath);
+			}
+
+			const result = await this.cliExec(whisperCli, args, { cwd: os.tmpdir(), env });
+			if (result.code !== 0) return null;
+
+			const raw = await fsPromises.readFile(`${outBase}.json`, "utf8");
+			const parsed = JSON.parse(raw) as { transcription?: { text?: string }[] };
+			const text = (parsed.transcription ?? [])
+				.map((segment) => (segment.text ?? "").trim())
+				.filter((t) => t.length > 0)
+				.join(" ")
+				.trim();
+			return text || null;
+		} catch {
+			return null;
+		} finally {
+			await Promise.all(cleanupPaths.map((p) => fsPromises.unlink(p).catch(() => {})));
+		}
 	}
 
 	private getLlmProvider(): LlmProvider {
@@ -1336,6 +1404,40 @@ class NogginSettingTab extends PluginSettingTab {
 					})
 				);
 		}
+
+		containerEl.createEl("h3", { text: "Voice capture" });
+		containerEl.createEl("p", {
+			text: "Transcribing a voice memo (Noggin: Toggle voice capture) prefers local whisper.cpp when it's installed, so no audio ever leaves this machine. Falls back to a Gemini/OpenAI API key above if local isn't set up.",
+			cls: "setting-item-description",
+		});
+
+		new Setting(containerEl)
+			.setName("Whisper CLI path")
+			.setDesc('Command or full path to whisper-cli (e.g. installed via "brew install whisper-cpp"). macOS only.')
+			.addText((text) =>
+				text
+					.setPlaceholder("whisper-cli")
+					.setValue(this.plugin.settings.whisperCliPath)
+					.onChange(async (value) => {
+						this.plugin.settings.whisperCliPath = value.trim() || "whisper-cli";
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Whisper model path")
+			.setDesc(
+				`Full path to a ggml whisper model file. Leave blank to use the default location (${this.plugin.defaultWhisperModelPath()}).`
+			)
+			.addText((text) =>
+				text
+					.setPlaceholder(this.plugin.defaultWhisperModelPath())
+					.setValue(this.plugin.settings.whisperModelPath)
+					.onChange(async (value) => {
+						this.plugin.settings.whisperModelPath = value.trim();
+						await this.plugin.saveSettings();
+					})
+			);
 
 		containerEl.createEl("h3", { text: "Folders" });
 

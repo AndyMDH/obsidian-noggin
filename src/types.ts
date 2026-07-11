@@ -11,6 +11,11 @@ export interface NogginSettings {
 	glmBaseUrl: string; // only used when apiProvider is "glm"
 	localBaseUrl: string; // only used when apiProvider is "local"
 	claudeCliPath: string;
+	// Local, offline voice-capture transcription (macOS only). Empty strings
+	// mean "use the default install location" - see defaultWhisperModelPath()
+	// in main.ts. Falls back to the Gemini/OpenAI key below when unavailable.
+	whisperCliPath: string;
+	whisperModelPath: string;
 	inboxFolder: string;
 	meetingsFolder: string;
 	wikisFolder: string;
@@ -63,6 +68,8 @@ export const DEFAULT_SETTINGS: NogginSettings = {
 	glmBaseUrl: "https://api.z.ai/api/paas/v4/",
 	localBaseUrl: "http://localhost:11434/v1",
 	claudeCliPath: "claude",
+	whisperCliPath: "whisper-cli",
+	whisperModelPath: "",
 	inboxFolder: "00-Inbox",
 	meetingsFolder: "10-Notes",
 	wikisFolder: "30-Wikis",

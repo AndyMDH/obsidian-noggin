@@ -1,6 +1,7 @@
-// Speech-to-text for audio captures. Audio becomes plain text first, then
-// flows through normal text enrichment - so voice works in every mode.
-// Anthropic has no audio API; transcription uses Gemini or OpenAI.
+// Cloud speech-to-text fallback for audio captures, used when local
+// whisper.cpp (see transcribeLocally in main.ts) isn't installed. Audio
+// becomes plain text first, then flows through normal text enrichment - so
+// voice works in every mode. Anthropic has no audio API, hence Gemini/OpenAI.
 
 import type { HttpPost, HttpResponse } from "./anthropic.ts";
 import { LlmApiError } from "./llmProvider.ts";

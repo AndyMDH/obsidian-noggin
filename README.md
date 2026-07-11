@@ -103,10 +103,12 @@ with the audio still playable inside. No buttons, no windows.
 dropped in `00-Inbox` works too — including recordings made in the Obsidian
 **mobile** app on the go.)
 
-One requirement: transcription (speech → text) runs through **Gemini or
-OpenAI**, so an API key for one of them must be set in Noggin's settings —
-even in Claude Code or GLM mode, where it's used *only* for transcription.
-(Claude and GLM have no audio API yet.)
+Transcription (speech → text) prefers **local whisper.cpp** on macOS if
+`whisper-cli` and a model are installed (`brew install whisper-cpp`, path
+configurable in Noggin's settings) — nothing leaves your machine, no API key
+needed. Without that set up, it falls back to a **Gemini or OpenAI** API key
+in Noggin's settings, even in Claude Code or GLM mode, where it's used *only*
+for transcription (Claude and GLM have no audio API yet).
 
 <details>
 <summary><strong>Power option: a system-wide dictation hotkey</strong></summary>

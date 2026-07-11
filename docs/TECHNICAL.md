@@ -15,7 +15,7 @@ obsidian-noggin/
 │   ├── anthropic.ts        # Anthropic Messages API adapter
 │   ├── openaiCompatible.ts # OpenAI-compatible adapter (OpenAI + Local)
 │   ├── gemini.ts           # Gemini API adapter
-│   ├── transcribe.ts       # Audio transcription via Gemini or OpenAI
+│   ├── transcribe.ts       # Cloud audio transcription fallback (Gemini/OpenAI)
 │   ├── cliRunner.ts        # Claude CLI arg builders, PATH helpers, log parsing
 │   └── skillTemplates.ts   # SKILL.md templates injected into .claude/skills/
 ├── test/                   # Node test-runner tests (no live API calls)
