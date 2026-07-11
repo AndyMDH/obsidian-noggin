@@ -156,7 +156,8 @@ and seeing a linked note. (Full detail:
 
 2. **Normalize by type.** Markdown/text is read as-is. Images and PDFs are
    base64-encoded into vision/document content blocks (HEIC is converted to
-   JPEG first via macOS's `sips`). Audio is **transcribed first** — Gemini's
+   JPEG first via macOS's `sips`). Audio is **transcribed first** — local
+   `whisper.cpp` when installed (macOS, no API key), otherwise Gemini's
    native audio input or OpenAI's `whisper-1` — and the transcript re-enters
    the text path, which is why voice works in every execution mode.
 
@@ -199,8 +200,8 @@ Every step is logged to `.noggin/pipeline.log` in the vault.
   get processed.
 - **CLI mode is desktop-only**; use Direct API key mode on mobile.
 - **One image, PDF, or recording per note.** HEIC photos need macOS to
-  convert; PDFs need Anthropic, Gemini, or CLI mode; audio needs a Gemini or
-  OpenAI key for transcription.
+  convert; PDFs need Anthropic, Gemini, or CLI mode; audio needs either local
+  `whisper.cpp` (macOS) or a Gemini/OpenAI key for transcription.
 - **API keys are stored in plain text** in your vault's settings file —
   keep the vault out of shared backups.
 - **Privacy**: only your captured notes, tag names, and recent note titles

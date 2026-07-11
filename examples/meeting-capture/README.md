@@ -7,7 +7,12 @@ never leaves your machine, and no API key is used for transcription.
 
 This is the setup for **calls with other people** (Teams/Zoom/Meet — it
 captures system audio *and* your mic). For solo voice notes, the plugin's
-built-in "Toggle voice capture" hotkey is all you need.
+built-in voice-capture button (or hotkey) is all you need.
+
+Once this is set up, Noggin's own **📞 phone icon** in the left sidebar (or
+command palette → "Noggin: Toggle meeting capture") remote-controls
+QuickRecorder the same way ⌥M does — use whichever trigger you prefer, both
+toggle the same recording.
 
 > Recording is silent to other participants — treat it as personal
 > note-taking and follow your workplace/client norms and local law.
