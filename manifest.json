@@ -2,8 +2,8 @@
   "id": "nous",
   "name": "Nous",
   "version": "2.0.0",
-  "minAppVersion": "1.4.0",
-  "description": "Turn dictated or pasted notes into a linked, tagged knowledge graph, right inside Obsidian - uses Claude Code (your subscription) or a direct API key from Anthropic, OpenAI, Gemini, or a local model, your choice.",
+  "minAppVersion": "1.5.7",
+  "description": "Turn dictated or pasted notes into a linked, tagged knowledge graph - uses Claude Code (your subscription) or a direct API key from Anthropic, OpenAI, Gemini, or a local model, your choice.",
   "author": "Andy Ho",
   "authorUrl": "https://github.com/AndyMDH",
   "isDesktopOnly": false

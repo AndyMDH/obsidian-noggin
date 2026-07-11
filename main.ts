@@ -1417,7 +1417,7 @@ class NousSettingTab extends PluginSettingTab {
 				);
 		}
 
-		containerEl.createEl("h3", { text: "Voice capture" });
+		new Setting(containerEl).setName("Voice capture").setHeading();
 		containerEl.createEl("p", {
 			text: "Transcribing a voice memo (Nous: Toggle voice capture) prefers local whisper.cpp when it's installed, so no audio ever leaves this machine. Falls back to a Gemini/OpenAI API key above if local isn't set up.",
 			cls: "setting-item-description",
@@ -1451,7 +1451,7 @@ class NousSettingTab extends PluginSettingTab {
 					})
 			);
 
-		containerEl.createEl("h3", { text: "Folders" });
+		new Setting(containerEl).setName("Folders").setHeading();
 
 		const folderSetting = (key: keyof NousSettings, name: string) => {
 			new Setting(containerEl).setName(name).addText((text) =>
@@ -1674,7 +1674,7 @@ class QuickCaptureModal extends Modal {
 		const input = this.contentEl.createEl("textarea", {
 			attr: { rows: "5", placeholder: "Type or paste anything… (Enter to save, Shift+Enter for a new line)" },
 		});
-		input.style.width = "100%";
+		input.setCssStyles({ width: "100%" });
 		input.addEventListener("input", () => {
 			this.text = input.value;
 		});
@@ -1689,7 +1689,7 @@ class QuickCaptureModal extends Modal {
 		const picker = this.contentEl.createEl("input", {
 			attr: { type: "file", accept: ".png,.jpg,.jpeg,.webp,.heic,.heif,.pdf,.m4a,.webm,.mp3,.wav,.ogg,.flac" },
 		});
-		picker.style.display = "none";
+		picker.setCssStyles({ display: "none" });
 		picker.addEventListener("change", () => {
 			this.attachedFile = picker.files?.[0] ?? null;
 			fileLabel.setText(this.attachedFile ? `Attached: ${this.attachedFile.name}` : "");
@@ -1721,7 +1721,7 @@ class QueryModal extends Modal {
 		const input = this.contentEl.createEl("textarea", {
 			attr: { rows: "3", placeholder: "What do you want to know?" },
 		});
-		input.style.width = "100%";
+		input.setCssStyles({ width: "100%" });
 		input.addEventListener("keydown", (e) => {
 			if (e.key === "Enter" && !e.shiftKey) {
 				e.preventDefault();
