@@ -97,6 +97,18 @@ export default class CortexPlugin extends Plugin {
 			callback: () => void this.toggleVoiceCapture(),
 		});
 
+		if (Platform.isMacOS) {
+			this.addCommand({
+				id: "toggle-meeting-capture",
+				name: "Toggle meeting capture (start/stop QuickRecorder)",
+				callback: () => void this.toggleMeetingCapture(),
+			});
+
+			this.addRibbonIcon("mic", "Cortex: toggle meeting capture", () => {
+				void this.toggleMeetingCapture();
+			});
+		}
+
 		if (this.settings.autoProcessOnCreate) {
 			this.registerEvent(
 				this.app.vault.on("create", (file) => {
@@ -410,6 +422,75 @@ export default class CortexPlugin extends Plugin {
 		recorder.start();
 		this.voiceRecorder = recorder;
 		new Notice("Cortex: recording - press the hotkey again to stop.");
+	}
+
+	// One button for full meeting capture (both sides of a call). Obsidian's
+	// own mic access (toggleVoiceCapture above) can never hear the other
+	// participant - that needs a real macOS screen/audio-recording
+	// entitlement, which only a signed native app gets. QuickRecorder has
+	// that entitlement and exposes a genuine AppleScript verb for it
+	// ("record system audio"), so this remote-controls QuickRecorder instead
+	// of trying to duplicate it. The same command call toggles start/stop -
+	// state here is read from the filesystem (an open file handle in the
+	// watch folder) rather than tracked in the plugin, so it stays correct
+	// even if the recording was started with the Opt+M hotkey instead of
+	// this button. The recording + transcription itself is unchanged: it
+	// still flows through the existing local whisper.cpp pipeline and lands
+	// in the vault inbox on its own, same as today.
+	async toggleMeetingCapture() {
+		if (!Platform.isMacOS) {
+			new Notice("Cortex: meeting capture needs QuickRecorder, macOS only.");
+			return;
+		}
+		const wasRecording = await this.isQuickRecorderRecording();
+		try {
+			await this.runAppleScript('tell application "QuickRecorder" to record system audio with microphone');
+		} catch {
+			new Notice(
+				"Cortex: couldn't reach QuickRecorder - the first time this runs, macOS may ask to let Obsidian control it. Approve that, then try again.",
+				10000
+			);
+			return;
+		}
+		new Notice(wasRecording ? "Cortex: meeting recording stopped." : "Cortex: meeting recording started.");
+	}
+
+	private runAppleScript(script: string): Promise<void> {
+		return new Promise((resolve, reject) => {
+			execFile("osascript", ["-e", script], (error) => {
+				if (error) reject(error);
+				else resolve();
+			});
+		});
+	}
+
+	private async quickRecorderWatchDir(): Promise<string> {
+		const home = os.homedir();
+		const fallback = path.join(home, "Movies", "MeetingRecordings");
+		try {
+			const dir = await new Promise<string>((resolve, reject) => {
+				execFile(
+					"defaults",
+					["read", "com.lihaoyun6.QuickRecorder", "saveDirectory"],
+					(error, stdout) => {
+						if (error) reject(error);
+						else resolve(stdout.trim());
+					}
+				);
+			});
+			return dir || fallback;
+		} catch {
+			return fallback;
+		}
+	}
+
+	private async isQuickRecorderRecording(): Promise<boolean> {
+		const watchDir = await this.quickRecorderWatchDir();
+		return new Promise((resolve) => {
+			execFile("lsof", ["+D", watchDir], (_error, stdout) => {
+				resolve(stdout.includes("QuickRecorder"));
+			});
+		});
 	}
 
 	async quickCapture(text: string, attached: File | null) {
