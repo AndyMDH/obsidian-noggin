@@ -80,7 +80,7 @@ image/PDF/voice memo, hit Capture, done. Or drop anything straight into the
 </picture>
 
 - **Type or paste** — quick capture, or a note (`Cmd/Ctrl+N`) in `00-Inbox`
-- **Voice** — press a hotkey, talk, press again (setup below)
+- **Voice** — click the mic icon (or a hotkey), talk, click again (setup below)
 - **Photos & screenshots** — `.png`, `.jpg`, `.webp`, `.heic` (to auto-capture
   Mac screenshots, see [`examples/`](examples/))
 - **PDFs**
@@ -92,16 +92,15 @@ force one anytime: command palette → "Noggin: Build/update wikis now").
 
 ### Capture by voice
 
-One-time setup: **Settings → Hotkeys**, search **"Noggin: Toggle voice
-capture"**, give it a key (say `Alt+Space`). From then on:
+Click the **🎙️ mic icon** in the left sidebar (or command palette →
+"Noggin: Toggle voice capture") to start recording, click it again to stop.
+That's the whole thing — the recording drops into the inbox and comes back
+as a tagged, summarized note with the audio still playable inside.
 
-**Press the key, talk, press it again.** That's the whole thing — the
-recording drops into the inbox and comes back as a tagged, summarized note
-with the audio still playable inside. No buttons, no windows.
-
-(No hotkey assigned? Run the same command from the palette. Any audio file
-dropped in `00-Inbox` works too — including recordings made in the Obsidian
-**mobile** app on the go.)
+(Prefer a hotkey? **Settings → Hotkeys**, search "Noggin: Toggle voice
+capture", give it a key — same command, your choice which trigger you use.
+Any audio file dropped in `00-Inbox` also works, including recordings made
+in the Obsidian **mobile** app on the go.)
 
 Transcription (speech → text) prefers **local whisper.cpp** on macOS if
 `whisper-cli` and a model are installed (`brew install whisper-cpp`, path
@@ -125,10 +124,13 @@ once on, the app stops typing transcripts into other apps.
 ### Record meetings (macOS)
 
 Calls with other people need system-audio capture, which no Obsidian plugin
-can do — so this one lives just outside the plugin: press **⌥M** when the
-meeting starts, again when it ends, and a speaker-labeled transcript lands
-in your inbox and comes out enriched. Fully local (free open-source recorder
-plus on-device Whisper — no API key, nothing uploaded). One-time setup in
+can do on its own — so this one remote-controls a free open-source recorder
+(QuickRecorder) instead of trying to duplicate it. Click the **📞 phone icon**
+in the left sidebar (or command palette → "Noggin: Toggle meeting capture")
+when the meeting starts, again when it ends — or use QuickRecorder's own
+**⌥M** hotkey directly, same result either way. A speaker-labeled transcript
+lands in your inbox and comes out enriched. Fully local (on-device Whisper —
+no API key, nothing uploaded). One-time setup in
 [`examples/meeting-capture/`](examples/meeting-capture/).
 
 Want Noggin to use a specific tag — a client, a project? Add a file with
