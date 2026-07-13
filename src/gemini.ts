@@ -58,7 +58,7 @@ export class GeminiProvider implements LlmProvider {
 			candidates?: { content?: { parts?: { functionCall?: { name?: string; args?: unknown } }[] } }[];
 		};
 		try {
-			parsed = JSON.parse(res.text);
+			parsed = JSON.parse(res.text) as typeof parsed;
 		} catch {
 			throw new Error(`Gemini API returned non-JSON response: ${res.text.slice(0, 200)}`);
 		}

@@ -264,6 +264,6 @@ test("clusterByTag excludes fragment-tagged notes from eligibility counting", ()
 	]);
 	const internal = clusters.find((c) => c.tag === "internal");
 	assert.ok(internal);
-	assert.equal(internal!.notes.length, 2);
-	assert.ok(!internal!.notes.some((n) => n.filename === "b"));
+	assert.equal(internal.notes.length, 2);
+	assert.ok(!internal.notes.some((n) => n.filename === "b"));
 });

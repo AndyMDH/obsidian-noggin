@@ -47,7 +47,7 @@ test("callTool sends a data-URI image_url block alongside the text when an image
 		{ text: "describe this", attachment: { kind: "image", mediaType: "image/png", base64Data: "abc123" } },
 		TOOL
 	);
-	const parsedBody = JSON.parse(capturedBody);
+	const parsedBody = JSON.parse(capturedBody) as { messages: { content: unknown }[] };
 	assert.deepEqual(parsedBody.messages[1].content, [
 		{ type: "text", text: "describe this" },
 		{ type: "image_url", image_url: { url: "data:image/png;base64,abc123" } },
@@ -92,7 +92,7 @@ test("callTool sends bearer auth and forces the tool via tool_choice", async () 
 	await provider.callTool("sys", { text: "msg" }, TOOL);
 	assert.equal(capturedUrl, "https://api.openai.com/v1/chat/completions");
 	assert.equal(capturedHeaders["authorization"], "Bearer my-key");
-	const parsedBody = JSON.parse(capturedBody);
+	const parsedBody = JSON.parse(capturedBody) as Record<string, unknown>;
 	assert.equal(parsedBody.model, "my-model");
 	assert.deepEqual(parsedBody.tool_choice, { type: "function", function: { name: "test_tool" } });
 });

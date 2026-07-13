@@ -53,7 +53,7 @@ export async function transcribeWithGemini(
 	}
 	let parsed: { candidates?: { content?: { parts?: { text?: string }[] } }[] };
 	try {
-		parsed = JSON.parse(res.text);
+		parsed = JSON.parse(res.text) as typeof parsed;
 	} catch {
 		throw new Error(`Gemini transcription returned non-JSON response: ${res.text.slice(0, 200)}`);
 	}
@@ -96,7 +96,7 @@ export function buildMultipartBody(
 		out.set(p, offset);
 		offset += p.length;
 	}
-	return out.buffer as ArrayBuffer;
+	return out.buffer;
 }
 
 export async function transcribeWithOpenAi(
@@ -126,7 +126,7 @@ export async function transcribeWithOpenAi(
 	}
 	let parsed: { text?: string };
 	try {
-		parsed = JSON.parse(res.text);
+		parsed = JSON.parse(res.text) as typeof parsed;
 	} catch {
 		throw new Error(`OpenAI transcription returned non-JSON response: ${res.text.slice(0, 200)}`);
 	}

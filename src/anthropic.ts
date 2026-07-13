@@ -87,7 +87,7 @@ export async function callClaudeTool<T>(
 		error?: { message?: string };
 	};
 	try {
-		parsed = JSON.parse(res.text);
+		parsed = JSON.parse(res.text) as typeof parsed;
 	} catch {
 		throw new Error(`Anthropic API returned non-JSON response: ${res.text.slice(0, 200)}`);
 	}

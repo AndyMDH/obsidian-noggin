@@ -21,7 +21,7 @@ test("transcribeWithGemini sends audio inline and returns joined text", async ()
 	let capturedBody: Record<string, unknown> = {};
 	const httpPost = async (url: string, _headers: Record<string, string>, body: string) => {
 		capturedUrl = url;
-		capturedBody = JSON.parse(body);
+		capturedBody = JSON.parse(body) as Record<string, unknown>;
 		return {
 			status: 200,
 			text: JSON.stringify({

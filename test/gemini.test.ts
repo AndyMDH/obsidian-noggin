@@ -41,7 +41,7 @@ test("callTool sends an inline_data part alongside the text when an image is giv
 		{ text: "describe this", attachment: { kind: "image", mediaType: "image/png", base64Data: "abc123" } },
 		TOOL
 	);
-	const parsedBody = JSON.parse(capturedBody);
+	const parsedBody = JSON.parse(capturedBody) as { contents: { parts: unknown }[] };
 	assert.deepEqual(parsedBody.contents[0].parts, [
 		{ text: "describe this" },
 		{ inline_data: { mime_type: "image/png", data: "abc123" } },
@@ -65,7 +65,7 @@ test("callTool sends an inline_data part with a PDF mime type when a document at
 		{ text: "summarize this", attachment: { kind: "document", mediaType: "application/pdf", base64Data: "abc123" } },
 		TOOL
 	);
-	const parsedBody = JSON.parse(capturedBody);
+	const parsedBody = JSON.parse(capturedBody) as { contents: { parts: unknown }[] };
 	assert.deepEqual(parsedBody.contents[0].parts, [
 		{ text: "summarize this" },
 		{ inline_data: { mime_type: "application/pdf", data: "abc123" } },
@@ -92,7 +92,7 @@ test("callTool sends the API key as a header and forces the tool via tool_config
 	assert.equal(capturedUrl, "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent");
 	assert.equal(capturedHeaders["x-goog-api-key"], "my-key");
 	assert.equal(capturedUrl.includes("key="), false); // key must not leak into the URL
-	const parsedBody = JSON.parse(capturedBody);
+	const parsedBody = JSON.parse(capturedBody) as Record<string, unknown>;
 	assert.deepEqual(parsedBody.tool_config, {
 		function_calling_config: { mode: "ANY", allowed_function_names: ["test_tool"] },
 	});

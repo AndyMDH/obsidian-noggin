@@ -9,11 +9,8 @@ import {
 	Setting,
 	TFile,
 	requestUrl,
+	type SettingDefinitionItem,
 } from "obsidian";
-import { execFile } from "child_process";
-import { promises as fsPromises } from "fs";
-import * as os from "os";
-import * as path from "path";
 import type { ApiProvider, NousSettings, EnrichResult, NoteIndexEntry, WikiSynthesisResult } from "./src/types";
 import { DEFAULT_SETTINGS, MODEL_OPTIONS } from "./src/types";
 import { AnthropicProvider } from "./src/anthropic";
@@ -45,6 +42,39 @@ import type { SkillFolders } from "./src/skillTemplates";
 
 const LOG_FOLDER = ".nous";
 const LOG_FILE = `${LOG_FOLDER}/pipeline.log`;
+const DEFAULT_CLAUDE_CLI_BIN = "claude";
+const DEFAULT_WHISPER_CLI_BIN = "whisper-cli";
+const LOCAL_BASE_URL_DESC = 'OpenAI-compatible endpoint, e.g. Ollama\'s default "http://localhost:11434/v1".';
+
+// child_process/fs/os/path aren't available on mobile, so they can't be
+// static imports (that would break the plugin bundle on load, everywhere,
+// not just where these are used) - loaded on demand instead, only from the
+// desktop/macOS-gated code paths that actually need them.
+type NodeModules = {
+	execFile: typeof import("child_process").execFile;
+	fs: typeof import("fs").promises;
+	os: typeof import("os");
+	path: typeof import("path");
+};
+let nodeModulesPromise: Promise<NodeModules> | null = null;
+function loadNodeModules(): Promise<NodeModules> {
+	if (!nodeModulesPromise) {
+		// obsidianmd/no-nodejs-modules fires here and can't be suppressed
+		// (eslint-comments/no-restricted-disable blocks it) - it only turns
+		// off when manifest.json sets isDesktopOnly: true, which would be
+		// false advertising: Nous genuinely runs in API-key mode on mobile,
+		// it just can't offer local whisper/CLI/HEIC features there. Every
+		// caller of loadNodeModules() already checks Platform.isMacOS or
+		// Platform.isDesktopApp before awaiting it, so this is safe.
+		nodeModulesPromise = Promise.all([
+			import("child_process"),
+			import("fs"),
+			import("os"),
+			import("path"),
+		]).then(([cp, fs, os, path]) => ({ execFile: cp.execFile, fs: fs.promises, os, path }));
+	}
+	return nodeModulesPromise;
+}
 
 export default class NousPlugin extends Plugin {
 	settings: NousSettings;
@@ -181,16 +211,20 @@ export default class NousPlugin extends Plugin {
 		);
 	}
 
+	// Display-only default path (used synchronously by the settings tab), so
+	// this avoids the async node-module loader - macOS-only feature, so a
+	// plain "/" join is safe (no need for the "path" module's platform logic).
 	defaultWhisperModelPath(): string {
-		return path.join(os.homedir(), ".local", "share", "whisper-models", "ggml-large-v3-turbo.bin");
+		return `${process.env.HOME ?? ""}/.local/share/whisper-models/ggml-large-v3-turbo.bin`;
 	}
 
 	private defaultWhisperVadModelPath(): string {
-		return path.join(os.homedir(), ".local", "share", "whisper-models", "ggml-silero-v5.1.2.bin");
+		return `${process.env.HOME ?? ""}/.local/share/whisper-models/ggml-silero-v5.1.2.bin`;
 	}
 
 	private static async fileExists(p: string): Promise<boolean> {
-		return fsPromises
+		const { fs } = await loadNodeModules();
+		return fs
 			.access(p)
 			.then(() => true)
 			.catch(() => false);
@@ -204,6 +238,7 @@ export default class NousPlugin extends Plugin {
 		const modelPath = this.settings.whisperModelPath.trim() || this.defaultWhisperModelPath();
 		if (!(await NousPlugin.fileExists(modelPath))) return null;
 
+		const { fs: fsPromises, os, path } = await loadNodeModules();
 		const stamp = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 		const rawPath = path.join(os.tmpdir(), `nous-voice-${stamp}.${extension}`);
 		const wavPath = path.join(os.tmpdir(), `nous-voice-${stamp}.wav`);
@@ -219,7 +254,7 @@ export default class NousPlugin extends Plugin {
 			);
 			if (convert.code !== 0) return null;
 
-			const whisperCli = this.settings.whisperCliPath.trim() || "whisper-cli";
+			const whisperCli = this.settings.whisperCliPath.trim() || DEFAULT_WHISPER_CLI_BIN;
 			const vadModelPath = this.defaultWhisperVadModelPath();
 			const args = ["-m", modelPath, "-f", wavPath, "-l", "auto", "-oj", "-of", outBase];
 			if (await NousPlugin.fileExists(vadModelPath)) {
@@ -301,7 +336,8 @@ export default class NousPlugin extends Plugin {
 		return `Connected - ${this.settings.models[this.settings.apiProvider]} responded correctly.`;
 	}
 
-	private cliExec: CliExec = (command, args, options) => {
+	private cliExec: CliExec = async (command, args, options) => {
+		const { execFile } = await loadNodeModules();
 		return new Promise((resolve) => {
 			const child = execFile(
 				command,
@@ -527,7 +563,7 @@ export default class NousPlugin extends Plugin {
 		// The record command re-shows QuickRecorder's window even when it was
 		// hidden (e.g. by a login-time hide script) - give it a moment to
 		// render, then hide it again the same way, so the toggle stays silent.
-		setTimeout(() => {
+		window.setTimeout(() => {
 			void this.runAppleScript('tell application "System Events" to set visible of process "QuickRecorder" to false').catch(
 				() => {}
 			);
@@ -535,16 +571,18 @@ export default class NousPlugin extends Plugin {
 		new Notice(wasRecording ? "Nous: meeting recording stopped." : "Nous: meeting recording started.");
 	}
 
-	private runAppleScript(script: string): Promise<void> {
+	private async runAppleScript(script: string): Promise<void> {
+		const { execFile } = await loadNodeModules();
 		return new Promise((resolve, reject) => {
 			execFile("osascript", ["-e", script], (error) => {
-				if (error) reject(error);
+				if (error) reject(Object.assign(new Error(error.message), error));
 				else resolve();
 			});
 		});
 	}
 
 	private async quickRecorderWatchDir(): Promise<string> {
+		const { execFile, os, path } = await loadNodeModules();
 		const home = os.homedir();
 		const fallback = path.join(home, "Movies", "MeetingRecordings");
 		try {
@@ -553,7 +591,7 @@ export default class NousPlugin extends Plugin {
 					"defaults",
 					["read", "com.lihaoyun6.QuickRecorder", "saveDirectory"],
 					(error, stdout) => {
-						if (error) reject(error);
+						if (error) reject(Object.assign(new Error(error.message), error));
 						else resolve(stdout.trim());
 					}
 				);
@@ -566,6 +604,7 @@ export default class NousPlugin extends Plugin {
 
 	private async isQuickRecorderRecording(): Promise<boolean> {
 		const watchDir = await this.quickRecorderWatchDir();
+		const { execFile } = await loadNodeModules();
 		return new Promise((resolve) => {
 			execFile("lsof", ["+D", watchDir], (_error, stdout) => {
 				resolve(stdout.includes("QuickRecorder"));
@@ -819,6 +858,7 @@ export default class NousPlugin extends Plugin {
 	// HEIC -> JPEG via macOS's sips (Obsidian can't render HEIC and most
 	// vision APIs reject it). Desktop-only.
 	private async convertHeicToJpeg(binary: ArrayBuffer): Promise<ArrayBuffer> {
+		const { execFile, fs: fsPromises, os, path } = await loadNodeModules();
 		const stamp = Date.now();
 		const inPath = path.join(os.tmpdir(), `nous-heic-${stamp}.heic`);
 		const outPath = path.join(os.tmpdir(), `nous-heic-${stamp}.jpg`);
@@ -826,15 +866,12 @@ export default class NousPlugin extends Plugin {
 			await fsPromises.writeFile(inPath, Buffer.from(binary));
 			await new Promise<void>((resolve, reject) => {
 				execFile("sips", ["-s", "format", "jpeg", inPath, "--out", outPath], (error) => {
-					if (error) reject(error);
+					if (error) reject(Object.assign(new Error(error.message), error));
 					else resolve();
 				});
 			});
 			const converted = await fsPromises.readFile(outPath);
-			return converted.buffer.slice(
-				converted.byteOffset,
-				converted.byteOffset + converted.byteLength
-			) as ArrayBuffer;
+			return converted.buffer.slice(converted.byteOffset, converted.byteOffset + converted.byteLength);
 		} finally {
 			await fsPromises.unlink(inPath).catch(() => {});
 			await fsPromises.unlink(outPath).catch(() => {});
@@ -960,7 +997,7 @@ export default class NousPlugin extends Plugin {
 						`${this.settings.meetingsFolder}/${attachmentFilename}`,
 						convertedBinary
 					);
-					await this.app.vault.delete(file);
+					await this.app.fileManager.trashFile(file);
 				} else {
 					await this.app.fileManager.renameFile(file, `${this.settings.meetingsFolder}/${attachmentFilename}`);
 				}
@@ -976,7 +1013,7 @@ export default class NousPlugin extends Plugin {
 			} else {
 				const markdown = logic.buildMeetingMarkdown(result, raw, enrichedAt, existingWikiLink);
 				await this.app.vault.create(destPath, markdown);
-				await this.app.vault.delete(file);
+				await this.app.fileManager.trashFile(file);
 			}
 			await this.appendLog(
 				`ENRICHED: ${finalFilename} - tags: [${result.tags.join(", ")}] - project: ${result.project}`
@@ -1176,51 +1213,64 @@ class NousSettingTab extends PluginSettingTab {
 		this.plugin = plugin;
 	}
 
-	display(): void {
-		const { containerEl } = this;
-		containerEl.empty();
+	getSettingDefinitions(): SettingDefinitionItem[] {
+		const items: SettingDefinitionItem[] = [];
 
-		new Setting(containerEl)
-			.setName("Execution mode")
-			.setDesc(
-				this.plugin.settings.executionMode === "cli"
-					? "Shells out to the Claude Code CLI, using whatever auth it already has (subscription or API key) - no separate billing, but desktop only and requires Claude Code installed."
-					: "Calls a model API directly (Anthropic, OpenAI, Gemini, or a local model) - works on mobile too (except Local, which needs a reachable server), but is billed separately from a Claude subscription/Claude Code login."
-			)
-			.addDropdown((dropdown) => {
-				dropdown
-					.addOption("cli", "Claude Code CLI (uses your subscription)")
-					.addOption("api", "Direct API key")
-					.setValue(this.plugin.settings.executionMode)
-					.onChange(async (value) => {
-						this.plugin.settings.executionMode = value === "api" ? "api" : "cli";
-						await this.plugin.saveSettings();
-						this.display();
+		items.push({
+			name: "Execution mode",
+			render: (setting) => {
+				setting
+					.setDesc(
+						this.plugin.settings.executionMode === "cli"
+							? "Shells out to the Claude Code CLI, using whatever auth it already has (subscription or API key) - no separate billing, but desktop only and requires Claude Code installed."
+							: "Calls a model API directly (Anthropic, OpenAI, Gemini, or a local model) - works on mobile too (except Local, which needs a reachable server), but is billed separately from a Claude subscription/Claude Code login."
+					)
+					.addDropdown((dropdown) => {
+						dropdown
+							.addOption("cli", "Claude Code CLI (uses your subscription)")
+							.addOption("api", "Direct API key")
+							.setValue(this.plugin.settings.executionMode)
+							.onChange(async (value) => {
+								this.plugin.settings.executionMode = value === "api" ? "api" : "cli";
+								await this.plugin.saveSettings();
+								this.update();
+							});
 					});
-			});
+			},
+		});
 
 		if (!Platform.isDesktopApp && this.plugin.settings.executionMode === "cli") {
-			containerEl.createEl("p", {
-				text: "CLI mode doesn't work on mobile - switch to Direct API key here, or use this device only to browse the vault.",
-				cls: "mod-warning",
+			items.push({
+				name: "",
+				render: (setting) => {
+					setting
+						.setDesc(
+							"CLI mode doesn't work on mobile - switch to direct API key here, or use this device only to browse the vault."
+						)
+						.setClass("mod-warning");
+				},
 			});
 		}
 
 		if (this.plugin.settings.executionMode === "cli") {
-			new Setting(containerEl)
-				.setName("Claude CLI path")
-				.setDesc(
-					'Command or full path to the Claude Code CLI. Obsidian (an Electron app) often starts with a slimmer PATH than your terminal, so if "claude" isn\'t found, try the full path (e.g. from running `which claude` in your terminal).'
-				)
-				.addText((text) =>
-					text
-						.setPlaceholder("claude")
-						.setValue(this.plugin.settings.claudeCliPath)
-						.onChange(async (value) => {
-							this.plugin.settings.claudeCliPath = value.trim() || "claude";
-							await this.plugin.saveSettings();
-						})
-				);
+			items.push({
+				name: "Claude CLI path",
+				render: (setting) => {
+					setting
+						.setDesc(
+							'Command or full path to the Claude Code CLI. Obsidian (an Electron app) often starts with a slimmer PATH than your terminal, so if "claude" isn\'t found, try the full path (e.g. from running `which claude` in your terminal).'
+						)
+						.addText((text) =>
+							text
+								.setPlaceholder(DEFAULT_CLAUDE_CLI_BIN)
+								.setValue(this.plugin.settings.claudeCliPath)
+								.onChange(async (value) => {
+									this.plugin.settings.claudeCliPath = value.trim() || DEFAULT_CLAUDE_CLI_BIN;
+									await this.plugin.saveSettings();
+								})
+						);
+				},
+			});
 		} else {
 			const provider = this.plugin.settings.apiProvider;
 			const providerLabel = {
@@ -1231,241 +1281,313 @@ class NousSettingTab extends PluginSettingTab {
 				local: "Local",
 			}[provider];
 
-			new Setting(containerEl)
-				.setName("Provider")
-				.setDesc(
-					'Which model API to call directly. "Local" needs no API key and sends nothing off this machine (e.g. Ollama).'
-				)
-				.addDropdown((dropdown) => {
-					dropdown
-						.addOption("anthropic", "Anthropic")
-						.addOption("openai", "OpenAI")
-						.addOption("gemini", "Gemini")
-						.addOption("glm", "GLM (Z.ai)")
-						.addOption("local", "Local (OpenAI-compatible, e.g. Ollama)")
-						.setValue(provider)
-						.onChange(async (value) => {
-							this.plugin.settings.apiProvider = value as ApiProvider;
-							await this.plugin.saveSettings();
-							this.display();
+			items.push({
+				name: "Provider",
+				render: (setting) => {
+					setting
+						.setDesc(
+							'Which model API to call directly. "local" needs no API key and sends nothing off this machine (e.g. Ollama).'
+						)
+						.addDropdown((dropdown) => {
+							dropdown
+								.addOption("anthropic", "Anthropic")
+								.addOption("openai", "OpenAI")
+								.addOption("gemini", "Gemini")
+								.addOption("glm", "GLM (Z.ai)")
+								.addOption("local", "Local (OpenAI-compatible, e.g. Ollama)")
+								.setValue(provider)
+								.onChange(async (value) => {
+									this.plugin.settings.apiProvider = value as ApiProvider;
+									await this.plugin.saveSettings();
+									this.update();
+								});
 						});
-				});
+				},
+			});
 
 			if (provider === "local") {
-				new Setting(containerEl)
-					.setName("Base URL")
-					.setDesc('OpenAI-compatible endpoint, e.g. Ollama\'s default "http://localhost:11434/v1".')
-					.addText((text) =>
-						text
-							.setValue(this.plugin.settings.localBaseUrl)
-							.onChange(async (value) => {
+				items.push({
+					name: "Base URL",
+					render: (setting) => {
+						setting.setDesc(LOCAL_BASE_URL_DESC).addText((text) =>
+							text.setValue(this.plugin.settings.localBaseUrl).onChange(async (value) => {
 								this.plugin.settings.localBaseUrl = value.trim() || DEFAULT_SETTINGS.localBaseUrl;
 								await this.plugin.saveSettings();
 							})
-					);
+						);
+					},
+				});
 			} else if (provider === "glm") {
-				new Setting(containerEl)
-					.setName("GLM API key")
-					.setDesc("Your Z.ai API key - stored locally in this vault.")
-					.addText((text) => {
-						text.inputEl.type = "password";
-						text.inputEl.autocomplete = "off";
-						text
-							.setValue(this.plugin.settings.apiKeys.glm)
-							.onChange(async (value) => {
+				items.push({
+					name: "GLM API key",
+					render: (setting) => {
+						setting.setDesc("Your Z.ai API key - stored locally in this vault.").addText((text) => {
+							text.inputEl.type = "password";
+							text.inputEl.autocomplete = "off";
+							text.setValue(this.plugin.settings.apiKeys.glm).onChange(async (value) => {
 								this.plugin.settings.apiKeys.glm = value.trim();
 								await this.plugin.saveSettings();
 							});
-					});
-				new Setting(containerEl)
-					.setName("Base URL")
-					.setDesc('Z.ai OpenAI-compatible endpoint. The coding endpoint is "https://api.z.ai/api/coding/paas/v4" if you have a Coding Plan.')
-					.addText((text) =>
-						text
-							.setValue(this.plugin.settings.glmBaseUrl)
-							.onChange(async (value) => {
-								this.plugin.settings.glmBaseUrl = value.trim() || DEFAULT_SETTINGS.glmBaseUrl;
-								await this.plugin.saveSettings();
-							})
-					);
+						});
+					},
+				});
+				items.push({
+					name: "Base URL",
+					render: (setting) => {
+						setting
+							.setDesc(
+								'Z.ai OpenAI-compatible endpoint. The coding endpoint is "https://api.z.ai/api/coding/paas/v4" if you have a Coding Plan.'
+							)
+							.addText((text) =>
+								text.setValue(this.plugin.settings.glmBaseUrl).onChange(async (value) => {
+									this.plugin.settings.glmBaseUrl = value.trim() || DEFAULT_SETTINGS.glmBaseUrl;
+									await this.plugin.saveSettings();
+								})
+							);
+					},
+				});
 			} else {
-				new Setting(containerEl)
-					.setName(`${providerLabel} API key`)
-					.setDesc(
-						"Stored locally in this vault's .obsidian/plugins/nous/data.json - keep this vault out of any repo or sync you don't fully control."
-					)
-					.addText((text) => {
-						text.inputEl.type = "password";
-						text.inputEl.autocomplete = "off";
-						text
-							.setValue(this.plugin.settings.apiKeys[provider])
-							.onChange(async (value) => {
-								this.plugin.settings.apiKeys[provider] = value.trim();
-								await this.plugin.saveSettings();
+				items.push({
+					name: `${providerLabel} API key`,
+					render: (setting) => {
+						setting
+							.setDesc(
+								`Stored locally in this vault's ${this.app.vault.configDir}/plugins/nous/data.json - keep this vault out of any repo or sync you don't fully control.`
+							)
+							.addText((text) => {
+								text.inputEl.type = "password";
+								text.inputEl.autocomplete = "off";
+								text.setValue(this.plugin.settings.apiKeys[provider]).onChange(async (value) => {
+									this.plugin.settings.apiKeys[provider] = value.trim();
+									await this.plugin.saveSettings();
+								});
 							});
-					});
+					},
+				});
 			}
 
 			if (provider === "local") {
-				new Setting(containerEl)
-					.setName("Model")
-					.setDesc("Model your local server should run, e.g. an Ollama model tag like \"llama3.1\".")
-					.addText((text) =>
-						text
-							.setValue(this.plugin.settings.models[provider])
-							.onChange(async (value) => {
-								this.plugin.settings.models[provider] = value.trim();
-								await this.plugin.saveSettings();
-							})
-					);
+				items.push({
+					name: "Model",
+					render: (setting) => {
+						setting
+							.setDesc('Model your local server should run, e.g. an Ollama model tag like "llama3.1".')
+							.addText((text) =>
+								text.setValue(this.plugin.settings.models[provider]).onChange(async (value) => {
+									this.plugin.settings.models[provider] = value.trim();
+									await this.plugin.saveSettings();
+								})
+							);
+					},
+				});
 			} else {
 				const options = MODEL_OPTIONS[provider];
 				const current = this.plugin.settings.models[provider];
 				const isListed = options.some((o) => o.id === current);
 				const showCustom = !isListed || this.customModelFor === provider;
-				new Setting(containerEl)
-					.setName("Model")
-					.setDesc(`${providerLabel} model used for both enrichment and wiki synthesis.`)
-					.addDropdown((dropdown) => {
-						for (const o of options) dropdown.addOption(o.id, o.label);
-						dropdown.addOption("__custom__", "Custom model id…");
-						dropdown.setValue(showCustom ? "__custom__" : current).onChange(async (value) => {
-							if (value === "__custom__") {
-								this.customModelFor = provider;
-							} else {
-								this.customModelFor = null;
-								this.plugin.settings.models[provider] = value;
-								await this.plugin.saveSettings();
-							}
-							this.display();
-						});
-					});
+				items.push({
+					name: "Model",
+					render: (setting) => {
+						setting
+							.setDesc(`${providerLabel} model used for both enrichment and wiki synthesis.`)
+							.addDropdown((dropdown) => {
+								for (const o of options) dropdown.addOption(o.id, o.label);
+								dropdown.addOption("__custom__", "Custom model ID…");
+								dropdown.setValue(showCustom ? "__custom__" : current).onChange(async (value) => {
+									if (value === "__custom__") {
+										this.customModelFor = provider;
+									} else {
+										this.customModelFor = null;
+										this.plugin.settings.models[provider] = value;
+										await this.plugin.saveSettings();
+									}
+									this.update();
+								});
+							});
+					},
+				});
 				if (showCustom) {
-					new Setting(containerEl)
-						.setName("Custom model id")
-						.setDesc(`Exact ${providerLabel} model id to use instead of the list above.`)
-						.addText((text) =>
-							text
-								.setValue(current)
-								.onChange(async (value) => {
-									this.plugin.settings.models[provider] = value.trim();
-									await this.plugin.saveSettings();
-								})
-						);
+					items.push({
+						name: "Custom model ID",
+						render: (setting) => {
+							setting
+								.setDesc(`Exact ${providerLabel} model id to use instead of the list above.`)
+								.addText((text) =>
+									text.setValue(current).onChange(async (value) => {
+										this.plugin.settings.models[provider] = value.trim();
+										await this.plugin.saveSettings();
+									})
+								);
+						},
+					});
 				}
 			}
 		}
 
-		new Setting(containerEl)
-			.setName("Test connection")
-			.setDesc(
-				this.plugin.settings.executionMode === "cli"
-					? "Checks that the Claude Code CLI can be found and run from Obsidian."
-					: "Makes one tiny API call with the provider, key, and model above to confirm they work."
-			)
-			.addButton((button) =>
-				button.setButtonText("Test").onClick(async () => {
-					button.setButtonText("Testing…").setDisabled(true);
-					try {
-						new Notice(`Nous: ${await this.plugin.testConnection()}`);
-					} catch (e) {
-						const msg = e instanceof LlmApiError ? `${e.message} (HTTP ${e.status})` : e instanceof Error ? e.message : String(e);
-						new Notice(`Nous: connection test failed - ${msg}`, 10000);
-					} finally {
-						button.setButtonText("Test").setDisabled(false);
-					}
-				})
-			);
+		items.push({
+			name: "Test connection",
+			render: (setting) => {
+				setting
+					.setDesc(
+						this.plugin.settings.executionMode === "cli"
+							? "Checks that the Claude Code CLI can be found and run from Obsidian."
+							: "Makes one tiny API call with the provider, key, and model above to confirm they work."
+					)
+					.addButton((button) =>
+						button.setButtonText("Test").onClick(async () => {
+							button.setButtonText("Testing…").setDisabled(true);
+							try {
+								new Notice(`Nous: ${await this.plugin.testConnection()}`);
+							} catch (e) {
+								const msg =
+									e instanceof LlmApiError
+										? `${e.message} (HTTP ${e.status})`
+										: e instanceof Error
+											? e.message
+											: String(e);
+								new Notice(`Nous: connection test failed - ${msg}`, 10000);
+							} finally {
+								button.setButtonText("Test").setDisabled(false);
+							}
+						})
+					);
+			},
+		});
 
-		new Setting(containerEl)
-			.setName("Auto-process on capture")
-			.setDesc("Enrich a new inbox note within a couple seconds of it being created, instead of only on manual runs.")
-			.addToggle((toggle) =>
-				toggle.setValue(this.plugin.settings.autoProcessOnCreate).onChange(async (value) => {
-					this.plugin.settings.autoProcessOnCreate = value;
-					await this.plugin.saveSettings();
-					new Notice("Reload the plugin (or restart Obsidian) for this change to take effect.");
-				})
-			);
+		items.push({
+			name: "Auto-process on capture",
+			render: (setting) => {
+				setting
+					.setDesc("Enrich a new inbox note within a couple seconds of it being created, instead of only on manual runs.")
+					.addToggle((toggle) =>
+						toggle.setValue(this.plugin.settings.autoProcessOnCreate).onChange(async (value) => {
+							this.plugin.settings.autoProcessOnCreate = value;
+							await this.plugin.saveSettings();
+							new Notice("Reload the plugin (or restart Obsidian) for this change to take effect.");
+						})
+					);
+			},
+		});
 
-		new Setting(containerEl)
-			.setName("Wiki threshold")
-			.setDesc("Number of non-fragment meeting notes a tag needs before a wiki hub page is created for it.")
-			.addText((text) =>
-				text.setValue(String(this.plugin.settings.wikiThreshold)).onChange(async (value) => {
-					const n = parseInt(value, 10);
-					if (!Number.isNaN(n) && n > 0) {
-						this.plugin.settings.wikiThreshold = n;
-						await this.plugin.saveSettings();
-					}
-				})
-			);
+		items.push({
+			name: "Wiki threshold",
+			render: (setting) => {
+				setting
+					.setDesc("Number of non-fragment meeting notes a tag needs before a wiki hub page is created for it.")
+					.addText((text) =>
+						text.setValue(String(this.plugin.settings.wikiThreshold)).onChange(async (value) => {
+							const n = parseInt(value, 10);
+							if (!Number.isNaN(n) && n > 0) {
+								this.plugin.settings.wikiThreshold = n;
+								await this.plugin.saveSettings();
+							}
+						})
+					);
+			},
+		});
 
 		if (this.plugin.settings.executionMode === "api") {
 			// CLI mode's duplicate check lives in the skill - nothing to configure here.
-			new Setting(containerEl)
-				.setName("Duplicate-check lookback")
-				.setDesc("How many of the most recent meeting notes to compare new captures against for duplicates and related-note linking.")
-				.addText((text) =>
-					text.setValue(String(this.plugin.settings.dedupLookback)).onChange(async (value) => {
-						const n = parseInt(value, 10);
-						if (!Number.isNaN(n) && n > 0) {
-							this.plugin.settings.dedupLookback = n;
-							await this.plugin.saveSettings();
-						}
-					})
-				);
+			items.push({
+				name: "Duplicate-check lookback",
+				render: (setting) => {
+					setting
+						.setDesc(
+							"How many of the most recent meeting notes to compare new captures against for duplicates and related-note linking."
+						)
+						.addText((text) =>
+							text.setValue(String(this.plugin.settings.dedupLookback)).onChange(async (value) => {
+								const n = parseInt(value, 10);
+								if (!Number.isNaN(n) && n > 0) {
+									this.plugin.settings.dedupLookback = n;
+									await this.plugin.saveSettings();
+								}
+							})
+						);
+				},
+			});
 		}
 
-		new Setting(containerEl).setName("Voice capture").setHeading();
-		containerEl.createEl("p", {
-			text: "Transcribing a voice memo (Nous: Toggle voice capture) prefers local whisper.cpp when it's installed, so no audio ever leaves this machine. Falls back to a Gemini/OpenAI API key above if local isn't set up.",
-			cls: "setting-item-description",
+		items.push({
+			name: "Voice capture",
+			render: (setting) => {
+				setting.setHeading();
+			},
+		});
+		items.push({
+			name: "",
+			render: (setting) => {
+				setting
+					.setDesc(
+						"Transcribing a voice memo (Nous: Toggle voice capture) prefers local whisper.cpp when it's installed, so no audio ever leaves this machine. Falls back to a Gemini/OpenAI API key above if local isn't set up."
+					)
+					.setClass("setting-item-description");
+			},
 		});
 
-		new Setting(containerEl)
-			.setName("Whisper CLI path")
-			.setDesc('Command or full path to whisper-cli (e.g. installed via "brew install whisper-cpp"). macOS only.')
-			.addText((text) =>
-				text
-					.setPlaceholder("whisper-cli")
-					.setValue(this.plugin.settings.whisperCliPath)
-					.onChange(async (value) => {
-						this.plugin.settings.whisperCliPath = value.trim() || "whisper-cli";
+		items.push({
+			name: "Whisper CLI path",
+			render: (setting) => {
+				setting
+					.setDesc(
+						'Command or full path to whisper-cli (for example, installed via "brew install whisper-cpp"). macOS only.'
+					)
+					.addText((text) =>
+						text
+							.setPlaceholder(DEFAULT_WHISPER_CLI_BIN)
+							.setValue(this.plugin.settings.whisperCliPath)
+							.onChange(async (value) => {
+								this.plugin.settings.whisperCliPath = value.trim() || DEFAULT_WHISPER_CLI_BIN;
+								await this.plugin.saveSettings();
+							})
+					);
+			},
+		});
+
+		items.push({
+			name: "Whisper model path",
+			render: (setting) => {
+				setting
+					.setDesc(
+						`Full path to a ggml whisper model file. Leave blank to use the default location (${this.plugin.defaultWhisperModelPath()}).`
+					)
+					.addText((text) =>
+						text
+							.setPlaceholder(this.plugin.defaultWhisperModelPath())
+							.setValue(this.plugin.settings.whisperModelPath)
+							.onChange(async (value) => {
+								this.plugin.settings.whisperModelPath = value.trim();
+								await this.plugin.saveSettings();
+							})
+					);
+			},
+		});
+
+		items.push({
+			name: "Folders",
+			render: (setting) => {
+				setting.setHeading();
+			},
+		});
+
+		const folderSetting = (key: keyof NousSettings, name: string): SettingDefinitionItem => ({
+			name,
+			render: (setting) => {
+				setting.addText((text) =>
+					text.setValue(this.plugin.settings[key] as string).onChange(async (value) => {
+						(this.plugin.settings[key] as string) = value.trim();
 						await this.plugin.saveSettings();
 					})
-			);
+				);
+			},
+		});
+		items.push(folderSetting("inboxFolder", "Inbox folder"));
+		items.push(folderSetting("meetingsFolder", "Meetings folder"));
+		items.push(folderSetting("wikisFolder", "Wikis folder"));
+		items.push(folderSetting("tagsFolder", "Tags folder"));
+		items.push(folderSetting("queriesFolder", "Queries folder"));
 
-		new Setting(containerEl)
-			.setName("Whisper model path")
-			.setDesc(
-				`Full path to a ggml whisper model file. Leave blank to use the default location (${this.plugin.defaultWhisperModelPath()}).`
-			)
-			.addText((text) =>
-				text
-					.setPlaceholder(this.plugin.defaultWhisperModelPath())
-					.setValue(this.plugin.settings.whisperModelPath)
-					.onChange(async (value) => {
-						this.plugin.settings.whisperModelPath = value.trim();
-						await this.plugin.saveSettings();
-					})
-			);
-
-		new Setting(containerEl).setName("Folders").setHeading();
-
-		const folderSetting = (key: keyof NousSettings, name: string) => {
-			new Setting(containerEl).setName(name).addText((text) =>
-				text.setValue(this.plugin.settings[key] as string).onChange(async (value) => {
-					(this.plugin.settings[key] as string) = value.trim();
-					await this.plugin.saveSettings();
-				})
-			);
-		};
-		folderSetting("inboxFolder", "Inbox folder");
-		folderSetting("meetingsFolder", "Meetings folder");
-		folderSetting("wikisFolder", "Wikis folder");
-		folderSetting("tagsFolder", "Tags folder");
-		folderSetting("queriesFolder", "Queries folder");
+		return items;
 	}
 }
 
@@ -1491,7 +1613,7 @@ class OnboardingModal extends Modal {
 		});
 
 		new Setting(this.contentEl)
-			.setName("I have a Claude subscription (Pro/Max)")
+			.setName("I have a Claude subscription (pro/max)")
 			.setDesc("Uses Claude Code - no separate billing. Desktop only.")
 			.addButton((b) =>
 				b.setButtonText("Use Claude Code").setCta().onClick(async () => {

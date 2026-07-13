@@ -78,7 +78,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
 			}[];
 		};
 		try {
-			parsed = JSON.parse(res.text);
+			parsed = JSON.parse(res.text) as typeof parsed;
 		} catch {
 			throw new Error(
 				`OpenAI-compatible endpoint returned non-JSON response: ${res.text.slice(0, 200)}`

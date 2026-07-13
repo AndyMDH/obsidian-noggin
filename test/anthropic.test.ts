@@ -36,7 +36,7 @@ test("callClaudeTool sends the right headers and forces the tool via tool_choice
 	await callClaudeTool(mockPost, "my-key", "my-model", "sys", { text: "msg" }, TOOL);
 	assert.equal(capturedHeaders["x-api-key"], "my-key");
 	assert.equal(capturedHeaders["anthropic-version"], "2023-06-01");
-	const parsedBody = JSON.parse(capturedBody);
+	const parsedBody = JSON.parse(capturedBody) as Record<string, unknown>;
 	assert.equal(parsedBody.model, "my-model");
 	assert.deepEqual(parsedBody.tool_choice, { type: "tool", name: "test_tool" });
 });
@@ -81,7 +81,7 @@ test("callClaudeTool puts the image block before the text block when an image is
 		{ text: "describe this", attachment: { kind: "image", mediaType: "image/png", base64Data: "abc123" } },
 		TOOL
 	);
-	const parsedBody = JSON.parse(capturedBody);
+	const parsedBody = JSON.parse(capturedBody) as { messages: { content: unknown }[] };
 	assert.deepEqual(parsedBody.messages[0].content, [
 		{ type: "image", source: { type: "base64", media_type: "image/png", data: "abc123" } },
 		{ type: "text", text: "describe this" },
@@ -105,7 +105,7 @@ test("callClaudeTool sends a document block (not image) when a PDF attachment is
 		{ text: "summarize this", attachment: { kind: "document", mediaType: "application/pdf", base64Data: "abc123" } },
 		TOOL
 	);
-	const parsedBody = JSON.parse(capturedBody);
+	const parsedBody = JSON.parse(capturedBody) as { messages: { content: unknown }[] };
 	assert.deepEqual(parsedBody.messages[0].content, [
 		{ type: "document", source: { type: "base64", media_type: "application/pdf", data: "abc123" } },
 		{ type: "text", text: "summarize this" },
