@@ -31,6 +31,12 @@ const context = await esbuild.context({
     ...builtinModules,
   ],
   format: "cjs",
+  // Without this, esbuild leaves dynamic import("child_process") etc. as
+  // literal browser-style imports instead of lowering them to require() -
+  // Electron's renderer can't resolve those, so every Node-dependent
+  // feature (CLI mode, whisper, meeting capture) fails at runtime with
+  // "Failed to resolve module specifier".
+  platform: "node",
   target: "es2020",
   logLevel: "info",
   sourcemap: prod ? false : "inline",

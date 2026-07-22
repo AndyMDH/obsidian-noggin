@@ -9,6 +9,7 @@ import {
 	Setting,
 	TFile,
 	requestUrl,
+	setIcon,
 	type SettingDefinitionItem,
 } from "obsidian";
 import type { ApiProvider, NousSettings, EnrichResult, NoteIndexEntry, WikiSynthesisResult } from "./src/types";
@@ -44,7 +45,25 @@ const LOG_FOLDER = ".nous";
 const LOG_FILE = `${LOG_FOLDER}/pipeline.log`;
 const DEFAULT_CLAUDE_CLI_BIN = "claude";
 const DEFAULT_WHISPER_CLI_BIN = "whisper-cli";
+// afconvert (CoreAudio) can read AIFF/WAV/CAF/M4A/MP3 but not WebM/Opus, so
+// local transcription silently fails if the browser records WebM (Chromium's
+// default with no mimeType hint) - ask for an afconvert-readable container
+// first and only fall back to WebM if the platform truly can't produce one.
+const PREFERRED_VOICE_MIME_TYPES = ["audio/mp4", "audio/mp4;codecs=mp4a.40.2", "audio/webm;codecs=opus", "audio/webm"];
+function pickVoiceMimeType(): string | undefined {
+	return PREFERRED_VOICE_MIME_TYPES.find(
+		(type) => typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(type)
+	);
+}
 const LOCAL_BASE_URL_DESC = 'OpenAI-compatible endpoint, e.g. Ollama\'s default "http://localhost:11434/v1".';
+
+// Electron's renderer exposes a real `require` global (Obsidian runs with
+// nodeIntegration on desktop) - not part of DOM's Window type, so declare it.
+declare global {
+	interface Window {
+		require: (id: string) => unknown;
+	}
+}
 
 // child_process/fs/os/path aren't available on mobile, so they can't be
 // static imports (that would break the plugin bundle on load, everywhere,
@@ -66,12 +85,22 @@ function loadNodeModules(): Promise<NodeModules> {
 		// it just can't offer local whisper/CLI/HEIC features there. Every
 		// caller of loadNodeModules() already checks Platform.isMacOS or
 		// Platform.isDesktopApp before awaiting it, so this is safe.
-		nodeModulesPromise = Promise.all([
-			import("child_process"),
-			import("fs"),
-			import("os"),
-			import("path"),
-		]).then(([cp, fs, os, path]) => ({ execFile: cp.execFile, fs: fs.promises, os, path }));
+		//
+		// This must be window.require, not a dynamic import("child_process")
+		// - Electron's renderer has no native module loader that resolves
+		// bare Node specifiers, so a real import() throws "Failed to resolve
+		// module specifier" at runtime (esbuild leaves external dynamic
+		// imports untouched regardless of format/platform). require() is a
+		// real Electron-provided global, and wrapping it in a resolved
+		// Promise keeps this exactly as lazy as the import() it replaces.
+		nodeModulesPromise = Promise.resolve().then(() => {
+			const req = window.require;
+			const cp = req("child_process") as typeof import("child_process");
+			const fs = req("fs") as typeof import("fs");
+			const os = req("os") as typeof import("os");
+			const path = req("path") as typeof import("path");
+			return { execFile: cp.execFile, fs: fs.promises, os, path };
+		});
 	}
 	return nodeModulesPromise;
 }
@@ -82,6 +111,11 @@ export default class NousPlugin extends Plugin {
 	private cliRunInProgress = false;
 	private voiceRecorder: MediaRecorder | null = null;
 	private voiceStream: MediaStream | null = null;
+	private voiceRibbonEl: HTMLElement | null = null;
+	private voiceStatusBarEl: HTMLElement | null = null;
+	private meetingRibbonEl: HTMLElement | null = null;
+	private meetingStatusBarEl: HTMLElement | null = null;
+	private meetingPollInterval: number | null = null;
 
 	async onload() {
 		await this.loadSettings();
@@ -115,9 +149,12 @@ export default class NousPlugin extends Plugin {
 			new QuickCaptureModal(this.app, this).open();
 		});
 
-		this.addRibbonIcon("mic", "Nous: toggle voice capture", () => {
+		this.voiceRibbonEl = this.addRibbonIcon("mic", "Nous: toggle voice capture", () => {
 			void this.toggleVoiceCapture();
 		});
+
+		this.voiceStatusBarEl = this.addStatusBarItem();
+		this.voiceStatusBarEl.hide();
 
 		this.addCommand({
 			id: "setup-wizard",
@@ -138,8 +175,21 @@ export default class NousPlugin extends Plugin {
 				callback: () => void this.toggleMeetingCapture(),
 			});
 
-			this.addRibbonIcon("phone-call", "Nous: toggle meeting capture", () => {
+			this.meetingRibbonEl = this.addRibbonIcon("phone-call", "Nous: toggle meeting capture", () => {
 				void this.toggleMeetingCapture();
+			});
+			this.meetingStatusBarEl = this.addStatusBarItem();
+			this.meetingStatusBarEl.hide();
+
+			// QuickRecorder's own ⌥M hotkey can start/stop a recording outside
+			// Nous entirely (that's by design - see toggleMeetingCapture), so the
+			// button-press-time update alone can go stale. Poll lightly to catch
+			// that case instead of leaving the indicator lying about state.
+			this.meetingPollInterval = window.setInterval(() => {
+				void this.isQuickRecorderRecording().then((recording) => this.setMeetingRecordingIndicator(recording));
+			}, 5000);
+			this.register(() => {
+				if (this.meetingPollInterval !== null) window.clearInterval(this.meetingPollInterval);
 			});
 		}
 
@@ -195,7 +245,7 @@ export default class NousPlugin extends Plugin {
 	// execution mode.
 	async transcribeAudio(extension: string, binary: ArrayBuffer, filename: string): Promise<string> {
 		const local = await this.transcribeLocally(extension, binary);
-		if (local) return local;
+		if (local && "text" in local) return local.text;
 
 		const keys = this.settings.apiKeys;
 		const mediaType = audioMimeType(extension);
@@ -206,8 +256,9 @@ export default class NousPlugin extends Plugin {
 		if (keys.openai) {
 			return transcribeWithOpenAi(this.httpPostBinary, keys.openai, mediaType, new Uint8Array(binary), filename);
 		}
+		const localHint = local && "failure" in local ? ` Local attempt failed: ${local.failure}` : "";
 		throw new Error(
-			"Audio capture needs local whisper-cli (Settings → Nous → Local voice transcription) or a Gemini/OpenAI API key. A key is only used to turn speech into text - enrichment still runs in your chosen mode."
+			`Audio capture needs local whisper-cli (Settings → Nous → Local voice transcription) or a Gemini/OpenAI API key. A key is only used to turn speech into text - enrichment still runs in your chosen mode.${localHint}`
 		);
 	}
 
@@ -230,9 +281,62 @@ export default class NousPlugin extends Plugin {
 			.catch(() => false);
 	}
 
-	// Returns null (rather than throwing) whenever local transcription isn't
-	// set up, so transcribeAudio can fall through to the cloud-key path.
-	private async transcribeLocally(extension: string, binary: ArrayBuffer): Promise<string | null> {
+	// Decodes any audio Chromium understands (mp4/aac, webm/opus, wav, mp3...)
+	// and resamples to 16kHz mono PCM, then hand-encodes a WAV - whisper-cli
+	// expects a plain WAV, and this avoids afconvert's fragile handling of
+	// MediaRecorder's non-finalized containers.
+	private static async decodeToWav16kMono(binary: ArrayBuffer): Promise<ArrayBuffer> {
+		const ctx = new AudioContext();
+		let decoded: AudioBuffer;
+		try {
+			decoded = await ctx.decodeAudioData(binary.slice(0));
+		} finally {
+			void ctx.close();
+		}
+
+		const targetRate = 16000;
+		const offline = new OfflineAudioContext(1, Math.ceil(decoded.duration * targetRate), targetRate);
+		const source = offline.createBufferSource();
+		source.buffer = decoded;
+		source.connect(offline.destination);
+		source.start();
+		const resampled = await offline.startRendering();
+		const samples = resampled.getChannelData(0);
+
+		const wav = new ArrayBuffer(44 + samples.length * 2);
+		const view = new DataView(wav);
+		const writeAscii = (offset: number, text: string) => {
+			for (let i = 0; i < text.length; i++) view.setUint8(offset + i, text.charCodeAt(i));
+		};
+		writeAscii(0, "RIFF");
+		view.setUint32(4, 36 + samples.length * 2, true);
+		writeAscii(8, "WAVE");
+		writeAscii(12, "fmt ");
+		view.setUint32(16, 16, true);
+		view.setUint16(20, 1, true); // PCM
+		view.setUint16(22, 1, true); // mono
+		view.setUint32(24, targetRate, true);
+		view.setUint32(28, targetRate * 2, true); // byte rate (rate * blockAlign)
+		view.setUint16(32, 2, true); // block align
+		view.setUint16(34, 16, true); // bits per sample
+		writeAscii(36, "data");
+		view.setUint32(40, samples.length * 2, true);
+		let offset = 44;
+		for (let i = 0; i < samples.length; i++, offset += 2) {
+			const clamped = Math.max(-1, Math.min(1, samples[i]));
+			view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+		}
+		return wav;
+	}
+
+	// Returns null when local transcription isn't set up at all (so
+	// transcribeAudio can fall through to the cloud-key path silently), or
+	// {failure} when it was attempted but broke - callers surface that reason
+	// instead of a generic "not configured" message.
+	private async transcribeLocally(
+		extension: string,
+		binary: ArrayBuffer
+	): Promise<{ text: string } | { failure: string } | null> {
 		if (!Platform.isMacOS) return null; // afconvert is macOS-only
 
 		const modelPath = this.settings.whisperModelPath.trim() || this.defaultWhisperModelPath();
@@ -240,19 +344,26 @@ export default class NousPlugin extends Plugin {
 
 		const { fs: fsPromises, os, path } = await loadNodeModules();
 		const stamp = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-		const rawPath = path.join(os.tmpdir(), `nous-voice-${stamp}.${extension}`);
 		const wavPath = path.join(os.tmpdir(), `nous-voice-${stamp}.wav`);
 		const outBase = path.join(os.tmpdir(), `nous-voice-${stamp}`);
-		const cleanupPaths = [rawPath, wavPath, `${outBase}.json`];
+		const cleanupPaths = [wavPath, `${outBase}.json`];
 		try {
-			await fsPromises.writeFile(rawPath, Buffer.from(binary));
 			const env = this.cliEnv();
-			const convert = await this.cliExec(
-				"afconvert",
-				["-f", "WAVE", "-d", "LEI16@16000", "-c", "1", rawPath, wavPath],
-				{ cwd: os.tmpdir(), env }
-			);
-			if (convert.code !== 0) return null;
+			// Previously shelled out to afconvert, but CoreAudio's ExtAudioFile
+			// rejects the fragmented/streaming mp4 (or webm) MediaRecorder
+			// produces - "couldn't set destination file's estimated duration" -
+			// because a live recording has no upfront duration atom. Chromium's
+			// own decoder has no such requirement (it produced the file), so
+			// decode + resample here instead of round-tripping through a CLI tool.
+			let wavBuffer: ArrayBuffer;
+			try {
+				wavBuffer = await NousPlugin.decodeToWav16kMono(binary);
+			} catch (err) {
+				return {
+					failure: `couldn't decode the .${extension} recording: ${err instanceof Error ? err.message : String(err)}`,
+				};
+			}
+			await fsPromises.writeFile(wavPath, Buffer.from(wavBuffer));
 
 			const whisperCli = this.settings.whisperCliPath.trim() || DEFAULT_WHISPER_CLI_BIN;
 			const vadModelPath = this.defaultWhisperVadModelPath();
@@ -262,7 +373,11 @@ export default class NousPlugin extends Plugin {
 			}
 
 			const result = await this.cliExec(whisperCli, args, { cwd: os.tmpdir(), env });
-			if (result.code !== 0) return null;
+			if (result.code !== 0) {
+				return {
+					failure: `${whisperCli} exited ${result.code}: ${(result.stderr || result.stdout).trim().slice(0, 200) || "no output"}`,
+				};
+			}
 
 			const raw = await fsPromises.readFile(`${outBase}.json`, "utf8");
 			const parsed = JSON.parse(raw) as { transcription?: { text?: string }[] };
@@ -271,9 +386,9 @@ export default class NousPlugin extends Plugin {
 				.filter((t) => t.length > 0)
 				.join(" ")
 				.trim();
-			return text || null;
-		} catch {
-			return null;
+			return text ? { text } : { failure: "whisper-cli produced no speech text (silence, or the recording was too quiet)" };
+		} catch (err) {
+			return { failure: err instanceof Error ? err.message : String(err) };
 		} finally {
 			await Promise.all(cleanupPaths.map((p) => fsPromises.unlink(p).catch(() => {})));
 		}
@@ -504,7 +619,8 @@ export default class NousPlugin extends Plugin {
 			new Notice("Nous: microphone access denied - allow it for Obsidian in system settings.", 8000);
 			return;
 		}
-		const recorder = new MediaRecorder(this.voiceStream);
+		const mimeType = pickVoiceMimeType();
+		const recorder = mimeType ? new MediaRecorder(this.voiceStream, { mimeType }) : new MediaRecorder(this.voiceStream);
 		const chunks: Blob[] = [];
 		recorder.ondataavailable = (e) => {
 			if (e.data.size > 0) chunks.push(e.data);
@@ -513,6 +629,7 @@ export default class NousPlugin extends Plugin {
 			this.voiceStream?.getTracks().forEach((t) => t.stop());
 			this.voiceStream = null;
 			this.voiceRecorder = null;
+			this.setVoiceRecordingIndicator(false);
 			void (async () => {
 				const mime = recorder.mimeType || "audio/webm";
 				const ext = mime.includes("mp4") ? "m4a" : mime.includes("ogg") ? "ogg" : "webm";
@@ -529,7 +646,30 @@ export default class NousPlugin extends Plugin {
 		};
 		recorder.start();
 		this.voiceRecorder = recorder;
+		this.setVoiceRecordingIndicator(true);
 		new Notice("Nous: recording - press the hotkey again to stop.");
+	}
+
+	// Recording previously had no persistent signal once the start Notice
+	// faded - swap the ribbon icon and show a status-bar item for as long as
+	// the mic is actually live.
+	private setVoiceRecordingIndicator(recording: boolean) {
+		if (this.voiceRibbonEl) {
+			setIcon(this.voiceRibbonEl, recording ? "circle-stop" : "mic");
+			this.voiceRibbonEl.toggleClass("nous-recording", recording);
+			this.voiceRibbonEl.setAttribute(
+				"aria-label",
+				recording ? "Nous: recording - click to stop" : "Nous: toggle voice capture"
+			);
+		}
+		if (this.voiceStatusBarEl) {
+			if (recording) {
+				this.voiceStatusBarEl.setText("🔴 Nous recording…");
+				this.voiceStatusBarEl.show();
+			} else {
+				this.voiceStatusBarEl.hide();
+			}
+		}
 	}
 
 	// One button for full meeting capture (both sides of a call). Obsidian's
@@ -568,7 +708,27 @@ export default class NousPlugin extends Plugin {
 				() => {}
 			);
 		}, 800);
+		this.setMeetingRecordingIndicator(!wasRecording);
 		new Notice(wasRecording ? "Nous: meeting recording stopped." : "Nous: meeting recording started.");
+	}
+
+	private setMeetingRecordingIndicator(recording: boolean) {
+		if (this.meetingRibbonEl) {
+			setIcon(this.meetingRibbonEl, recording ? "circle-stop" : "phone-call");
+			this.meetingRibbonEl.toggleClass("nous-recording", recording);
+			this.meetingRibbonEl.setAttribute(
+				"aria-label",
+				recording ? "Nous: meeting recording - click to stop" : "Nous: toggle meeting capture"
+			);
+		}
+		if (this.meetingStatusBarEl) {
+			if (recording) {
+				this.meetingStatusBarEl.setText("🔴 Nous meeting recording…");
+				this.meetingStatusBarEl.show();
+			} else {
+				this.meetingStatusBarEl.hide();
+			}
+		}
 	}
 
 	private async runAppleScript(script: string): Promise<void> {

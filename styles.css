@@ -1,0 +1,14 @@
+.nous-recording {
+	color: var(--text-error);
+	animation: nous-recording-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes nous-recording-pulse {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.35;
+	}
+}
